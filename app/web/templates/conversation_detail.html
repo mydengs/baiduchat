@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow"><a href="/admin/conversations">会话管理</a> / 详情</p>
+    <h2>{{ item.title or item.local_conversation_id }}</h2>
+    <p class="page-desc">查看本地会话与百度窗口的绑定关系，以及每一轮请求的 rank、qid、pkgId、耗时和内容预览。</p>
+  </div>
+  <div class="row-actions">
+    <form method="post" action="/admin/conversations/{{ item.id }}/reset"><button class="secondary-action">重置绑定</button></form>
+    <form method="post" action="/admin/conversations/{{ item.id }}/delete"><button class="danger-action">删除会话</button></form>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="grid detail-grid">
+    <div class="metric"><span>本地会话</span><code>{{ item.local_conversation_id }}</code></div>
+    <div class="metric"><span>百度 sessionId</span><code>{{ item.baidu_session_id or "-" }}</code></div>
+    <div class="metric"><span>最后 qid</span><code>{{ item.last_qid or "-" }}</code></div>
+    <div class="metric"><span>轮次</span><b>{{ item.rank }}</b></div>
+  </div>
+  <div class="detail-lines">
+    <span>路由模型：{{ item.model or "-" }}</span>
+    <span>客户端模型：{{ item.requested_model or item.model or "-" }}</span>
+    <span>百度 modelName：{{ item.baidu_model or "-" }}</span>
+    <span>凭证：{{ item.credential_name or "anonymous" }}</span>
+    {% if item.credential_id %}
+      <span>Cookie 绑定：固定凭证 #{{ item.credential_id }}</span>
+    {% elif item.cookie_snapshot %}
+      <span>Cookie 绑定：已保存匿名快照</span>
+    {% else %}
+      <span>Cookie 绑定：未保存</span>
+    {% endif %}
+    <span>来源 IP：{{ item.source_ip or "-" }}</span>
+    <span>API Key：{{ item.api_key_name or "-" }}</span>
+    <span>创建：{{ item.created_at }}</span>
+    <span>最近活跃：{{ item.last_active_at }}</span>
+  </div>
+  {% if item.baidu_session_id %}
+    <p><a href="https://chat.baidu.com/search/{{ item.baidu_session_id }}?enter_type=chat_url" target="_blank">打开对应百度网页对话窗口</a></p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>请求轮次</h3>
+      <p>这里保留最近 200 轮，便于检查是否正确复用了同一个百度 sessionId。</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>rank</th>
+          <th>百度标识</th>
+          <th>状态</th>
+          <th>耗时</th>
+          <th>预览</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for turn in turns %}
+        <tr>
+          <td><small>{{ turn.created_at }}</small></td>
+          <td>{{ turn.rank }}</td>
+          <td>
+            <small>qid：<code>{{ turn.qid or "-" }}</code></small>
+            <small>session：<code>{{ turn.session_id or "-" }}</code></small>
+            <small>pkg：<code>{{ turn.pkg_id or "-" }}</code></small>
+            <small>模型：{{ turn.requested_model or turn.model or "-" }} -> {{ turn.baidu_model or "-" }}</small>
+          </td>
+          <td>
+            <span class="status-pill {{ 'ok' if turn.status == 'completed' else 'danger' if turn.status == 'failed' else 'off' }}">{{ turn.status }}</span>
+            {% if turn.error %}<small class="error">{{ turn.error }}</small>{% endif %}
+          </td>
+          <td>{{ turn.duration_ms }} ms</td>
+          <td>
+            <details>
+              <summary>请求预览</summary>
+              <pre>{{ turn.prompt_preview or "未保存" }}</pre>
+            </details>
+            <details>
+              <summary>响应预览</summary>
+              <pre>{{ turn.response_preview or "未保存" }}</pre>
+            </details>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="empty-state">还没有轮次记录。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

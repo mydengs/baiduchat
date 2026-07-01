@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">工具调用兼容层</p>
+    <h2>工具调用配置</h2>
+    <p class="page-desc">控制 OpenAI tools / function calling 的解析、流式缓冲、失败兜底和客户端适配策略。普通聊天仍可流式输出；工具调用建议先缓冲成完整结构后再返回给客户端执行。</p>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>协议策略</h3>
+      <p>不同客户端对工具调用的容忍度不同。Cline、Chatbox 通常更依赖标准 OpenAI tool_calls；Cherry Studio、Tokeny 等 Agent 客户端可能出现 DSML 文本，需要额外解析和兜底。</p>
+    </div>
+  </div>
+  <form method="post" action="/admin/tools" class="form-grid">
+    <label>工具调用模式
+      <select name="tool_call_mode">
+        <option value="auto" {% if values.tool_call_mode == "auto" %}selected{% endif %}>自动：普通文本流式，工具调用自动缓冲解析</option>
+        <option value="force_buffer" {% if values.tool_call_mode == "force_buffer" %}selected{% endif %}>强制缓冲：请求带 tools 时等待完整响应再返回</option>
+        <option value="stream_compat" {% if values.tool_call_mode == "stream_compat" %}selected{% endif %}>流式兼容：尽量流式，疑似工具标签时缓冲</option>
+        <option value="off" {% if values.tool_call_mode == "off" %}selected{% endif %}>关闭：不解析工具调用，全部按文本返回</option>
+      </select>
+      <small>推荐 auto。工具调用必须拿到完整结构，不能像普通文本那样逐字透传。</small>
+    </label>
+    <label>客户端适配
+      <select name="tool_client_profile">
+        {% for profile in ["auto", "openai", "cherry", "cline", "chatbox", "openwebui", "lobe", "hermes", "tokeny"] %}
+          <option value="{{ profile }}" {% if values.tool_client_profile == profile %}selected{% endif %}>{{ profile }}</option>
+        {% endfor %}
+      </select>
+      <small>后续可继续针对具体客户端微调工具格式和兜底策略。</small>
+    </label>
+    <label>缓冲超时（毫秒）
+      <input type="number" min="1000" step="1000" name="tool_buffer_timeout_ms" value="{{ values.tool_buffer_timeout_ms }}">
+      <small>用于长工具调用的缓冲窗口设置。</small>
+    </label>
+    <label>最大缓冲字符数
+      <input type="number" min="1000" step="1000" name="tool_max_buffer_chars" value="{{ values.tool_max_buffer_chars }}">
+      <small>长文写文件时需要较大缓冲；过小会导致工具参数不完整。</small>
+    </label>
+    <label>解析失败重试次数
+      <input type="number" min="0" max="5" name="tool_parse_retries" value="{{ values.tool_parse_retries }}">
+      <small>重试是本地修复解析，不会重复执行客户端工具。</small>
+    </label>
+    <label>解析失败兜底
+      <select name="tool_parse_failure_strategy">
+        <option value="clean_text" {% if values.tool_parse_failure_strategy == "clean_text" %}selected{% endif %}>清理标签后按文本返回</option>
+        <option value="error" {% if values.tool_parse_failure_strategy == "error" %}selected{% endif %}>返回解析失败错误</option>
+        <option value="raw_text" {% if values.tool_parse_failure_strategy == "raw_text" %}selected{% endif %}>原样文本返回</option>
+      </select>
+      <small>推荐 clean_text，避免 DSML/XML 标签污染客户端界面。</small>
+    </label>
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="tool_loop_protection" {% if values.tool_loop_protection == "true" %}checked{% endif %}>
+      启用工具循环提示：工具结果返回后，提示模型基于已有结果继续，减少反复读取同一内容。
+    </label>
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="tool_force_final_after_result" {% if values.tool_force_final_after_result == "true" %}checked{% endif %}>
+      工具结果返回后，要求模型基于结果生成最终自然语言回复。
+    </label>
+
+    <div class="span-2 section-divider"></div>
+    <div class="span-2">
+      <h3>工具保护规则</h3>
+      <p class="muted">这些规则只用于防止明显异常的工具参数污染客户端。当前项目不再使用隐藏的业务关键词拦截，不会因为路径包含“正文”“第05章”等正常词语而阻止工具调用。</p>
+    </div>
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="tool_repeat_protection_enabled" {% if values.tool_repeat_protection_enabled == "true" %}checked{% endif %}>
+      启用重复工具调用保护：触发后会中断本轮重复工具调用，并返回纠正提示。Tokeny、Cline 等 Agent 客户端建议默认关闭，避免误伤批量文件操作。
+    </label>
+    <label>重复保护范围
+      <select name="tool_repeat_protection_scope">
+        <option value="off" {% if values.tool_repeat_protection_scope == "off" %}selected{% endif %}>关闭：不做重复工具拦截</option>
+        <option value="delete_move" {% if values.tool_repeat_protection_scope == "delete_move" %}selected{% endif %}>仅删除/移动/重命名：delete/remove/move/rename</option>
+        <option value="write" {% if values.tool_repeat_protection_scope == "write" %}selected{% endif %}>写入类：modify/write 文件</option>
+        <option value="all" {% if values.tool_repeat_protection_scope == "all" %}selected{% endif %}>全部工具：风险最高，容易误伤 Agent 批量操作</option>
+      </select>
+      <small>保护范围只在“启用重复工具调用保护”勾选后生效。</small>
+    </label>
+    <label>重复判定方式
+      <select name="tool_repeat_match_mode">
+        <option value="none" {% if values.tool_repeat_match_mode == "none" %}selected{% endif %}>不判定：等同关闭重复保护</option>
+        <option value="exact" {% if values.tool_repeat_match_mode == "exact" %}selected{% endif %}>完全相同参数：工具名和参数 JSON 完全一致才算重复</option>
+        <option value="path" {% if values.tool_repeat_match_mode == "path" %}selected{% endif %}>只看文件路径：同一工具操作同一路径即算重复，谨慎使用</option>
+      </select>
+      <small>长文分批写入建议使用“完全相同参数”或直接关闭。</small>
+    </label>
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="tool_arg_safety_enabled" {% if values.tool_arg_safety_enabled == "true" %}checked{% endif %}>
+      启用工具参数安全校验总开关。关闭后不再进行路径结构和乱码内容拦截，只负责把百度 DSML 转成 OpenAI tool_calls。Agent 客户端调试时如果怀疑保护规则误伤，可以先关闭此项排查。
+    </label>
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="tool_path_safety_enabled" {% if values.tool_path_safety_enabled == "true" %}checked{% endif %}>
+      启用文件路径结构校验：只检查换行、超长路径、“.mdwrite / .md#标题”这类明显把 operation/content 混入 filePath 的结构异常；不判断目录名、文件名、章节名、业务关键词是否合理。
+    </label>
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="tool_mojibake_safety_enabled" {% if values.tool_mojibake_safety_enabled == "true" %}checked{% endif %}>
+      启用写入内容乱码校验：只检查 modify_file.content 是否出现大量 UTF-8/GBK 误解码特征。它不是内容审核，也不是文件路径审核。
+    </label>
+    <label class="span-2">乱码检测特征词
+      <textarea name="tool_mojibake_markers" rows="4">{{ values.tool_mojibake_markers }}</textarea>
+      <small>这是工具写入内容的编码异常检测规则，英文逗号或换行分隔。这里只识别“文本看起来被错误转码”的特征，不参与判断任何业务路径、章节名、文件名或正文内容是否应该写入。</small>
+    </label>
+    <div class="span-2">
+      <button class="primary-action">保存工具调用配置</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h3>推荐配置</h3>
+  <div class="grid detail-grid">
+    <div class="metric"><span>Cherry Studio</span><b>auto + cherry</b><small>兼容 DSML 兜底和流式缓冲。</small></div>
+    <div class="metric"><span>Cline</span><b>force_buffer + cline</b><small>优先标准 OpenAI tool_calls，避免半截流式工具调用。</small></div>
+    <div class="metric"><span>Chatbox</span><b>auto + chatbox</b><small>标准 tools 优先，失败时清理文本。</small></div>
+    <div class="metric"><span>Hermes Agent</span><b>auto + hermes</b><small>预留 XML/结构化兜底适配。</small></div>
+    <div class="metric"><span>Tokeny</span><b>auto + tokeny</b><small>适合多轮 Agent 工具执行，保持缓冲解析并允许工具结果后继续下一步工具。</small></div>
+  </div>
+</section>
+{% endblock %}

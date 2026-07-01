@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or "Baidu OpenAI Proxy" }}</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  <aside>
+    <h1>百度适配网关</h1>
+    <nav>
+      <a href="/admin">概览</a>
+      <a href="/admin/settings">系统配置</a>
+      <a href="/admin/limits">限流安全</a>
+      <a href="/admin/models">模型配置</a>
+      <a href="/admin/credentials">凭证池</a>
+      <a href="/admin/conversations">会话管理</a>
+      <a href="/admin/tools">工具调用</a>
+      <a href="/admin/api-keys">API Keys</a>
+      <a href="/admin/prompts">内置提示词</a>
+      <a href="/admin/logs">日志统计</a>
+    </nav>
+    <form method="post" action="/admin/logout"><button>退出</button></form>
+  </aside>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

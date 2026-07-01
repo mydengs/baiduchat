@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">排障与审计</p>
+    <h2>日志统计</h2>
+    <p class="page-desc">用于排查第三方客户端请求、百度上游错误、工具调用解析、凭证调度和后台操作。可以用 request_id、trace、模型、IP、API Key、错误内容等关键词搜索。</p>
+  </div>
+  <a class="button-link" href="/admin/logs/export">导出请求 CSV</a>
+</section>
+
+<section class="grid">
+  <div class="metric"><b>{{ stats.request_total }}</b><span>请求总数</span></div>
+  <div class="metric"><b>{{ stats.request_failed }}</b><span>失败请求</span></div>
+  <div class="metric"><b>{{ stats.system_errors }}</b><span>系统告警/错误</span></div>
+  <div class="metric"><b>{{ stats.audits }}</b><span>后台操作</span></div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>检索与清理</h3>
+      <p>建议排查时先复制请求日志里的 request_id，再用该值搜索系统日志中的 trace 信息。</p>
+    </div>
+  </div>
+  <form method="get" action="/admin/logs" class="search-row">
+    <input name="q" value="{{ q }}" placeholder="搜索 request_id / trace / 模型 / IP / API Key / 错误内容">
+    <button class="primary-action">搜索</button>
+    {% if q %}
+      <a class="secondary-link" href="/admin/logs">清除</a>
+    {% endif %}
+  </form>
+  <form method="post" action="/admin/logs/cleanup" onsubmit="return confirm('确定按保留天数清理旧日志吗？')">
+    <button class="secondary-action">按保留天数清理旧日志</button>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>请求日志</h3>
+      <p>记录 OpenAI 兼容接口调用结果、耗时、字符量和错误。request_id 是串联排障的核心标识。</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table log-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>request_id</th>
+          <th>接口</th>
+          <th>模型</th>
+          <th>来源</th>
+          <th>耗时</th>
+          <th>字符量</th>
+          <th>状态</th>
+          <th>错误</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in req_logs %}
+        <tr>
+          <td><small>{{ item.created_at }}</small></td>
+          <td><code>{{ item.request_id }}</code></td>
+          <td>{{ item.endpoint }}</td>
+          <td>{{ item.model }}</td>
+          <td>
+            <small>IP：{{ item.source_ip or "-" }}</small>
+            <small>Key：{{ item.api_key_name or "-" }}</small>
+          </td>
+          <td>{{ item.duration_ms }} ms</td>
+          <td>
+            <small>输入：{{ item.prompt_chars }}</small>
+            <small>输出：{{ item.completion_chars }}</small>
+          </td>
+          <td>
+            {% if item.status_code >= 400 %}
+              <span class="status-pill danger">{{ item.status_code }}</span>
+            {% else %}
+              <span class="status-pill ok">{{ item.status_code }}</span>
+            {% endif %}
+          </td>
+          <td class="log-message">{{ item.error or "-" }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="9" class="empty-state">暂无请求日志</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>系统日志</h3>
+      <p>记录凭证、会话绑定、工具调用解析、上游请求等内部事件。后续会继续把 trace_id 贯穿到更多模块。</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table log-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>级别</th>
+          <th>模块</th>
+          <th>消息</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in sys_logs %}
+        <tr>
+          <td><small>{{ item.created_at }}</small></td>
+          <td>
+            {% if item.level == "ERROR" %}
+              <span class="status-pill danger">ERROR</span>
+            {% elif item.level == "WARNING" %}
+              <span class="status-pill off">WARNING</span>
+            {% else %}
+              <span class="status-pill ok">{{ item.level }}</span>
+            {% endif %}
+          </td>
+          <td>{{ item.module }}</td>
+          <td class="log-message">{{ item.message }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="empty-state">暂无系统日志</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>操作审计</h3>
+      <p>记录后台登录、配置修改、删除、清理等管理操作。</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table log-table">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>操作者</th>
+          <th>IP</th>
+          <th>动作</th>
+          <th>目标</th>
+          <th>详情</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in audits %}
+        <tr>
+          <td><small>{{ item.created_at }}</small></td>
+          <td>{{ item.actor }}</td>
+          <td>{{ item.source_ip }}</td>
+          <td>{{ item.action }}</td>
+          <td>{{ item.target }}</td>
+          <td class="log-message">{{ item.detail }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="empty-state">暂无操作审计</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

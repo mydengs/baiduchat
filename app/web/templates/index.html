@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>概览</h2>
+<section class="grid">
+  <div class="metric"><b>{{ stats.models }}</b><span>模型</span></div>
+  <div class="metric"><b>{{ stats.credentials }}</b><span>凭证</span></div>
+  <div class="metric"><b>{{ stats.api_keys }}</b><span>API Key</span></div>
+  <div class="metric"><b>{{ stats.requests }}</b><span>请求记录</span></div>
+</section>
+<h3>最近请求</h3>
+<table><tr><th>时间</th><th>接口</th><th>模型</th><th>IP</th><th>耗时</th><th>状态</th></tr>
+{% for item in recent %}
+<tr><td>{{ item.created_at }}</td><td>{{ item.endpoint }}</td><td>{{ item.model }}</td><td>{{ item.source_ip }}</td><td>{{ item.duration_ms }}ms</td><td>{{ item.status_code }}</td></tr>
+{% endfor %}
+</table>
+{% endblock %}

@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">上下文与百度窗口绑定</p>
+    <h2>会话管理</h2>
+    <p class="page-desc">控制第三方客户端的新对话是否绑定到百度侧长期窗口，并查看本地会话、百度 sessionId、轮次、凭证和最近请求状态。</p>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>会话模式</h3>
+      <p>无状态模式最稳定；绑定模式会把同一个客户端会话继续投递到同一个百度窗口；混合模式只在客户端传入会话标识时绑定。</p>
+    </div>
+  </div>
+  <form method="post" action="/admin/conversations/settings" class="form-grid">
+    <label class="span-2">运行模式
+      <select name="conversation_mode">
+        <option value="stateless" {% if values.conversation_mode == "stateless" %}selected{% endif %}>无状态模式：每次独立请求，只依赖客户端 messages[]</option>
+        <option value="bound" {% if values.conversation_mode == "bound" %}selected{% endif %}>绑定模式：维护客户端会话与百度窗口 sessionId</option>
+        <option value="hybrid" {% if values.conversation_mode == "hybrid" %}selected{% endif %}>混合模式：有 conversation_id 时绑定，否则无状态</option>
+      </select>
+    </label>
+
+    <label>会话过期时间（小时）
+      <input type="number" min="0" name="conversation_ttl_hours" value="{{ values.conversation_ttl_hours }}">
+      <small>超过该时间未活跃后，自动重新创建百度窗口；0 表示不过期。</small>
+    </label>
+
+    <label>最大轮次
+      <input type="number" min="0" name="conversation_max_turns" value="{{ values.conversation_max_turns }}">
+      <small>达到轮次后自动重置百度窗口；0 表示不限制。</small>
+    </label>
+
+    <label class="span-2">绑定模式提交内容策略
+      <select name="conversation_message_strategy">
+        <option value="smart" {% if values.conversation_message_strategy == "smart" %}selected{% endif %}>智能模式：首轮提交完整 messages，绑定成功后只提交最新用户消息</option>
+        <option value="latest_user_only" {% if values.conversation_message_strategy == "latest_user_only" %}selected{% endif %}>始终只提交最新用户消息</option>
+        <option value="full_messages" {% if values.conversation_message_strategy == "full_messages" %}selected{% endif %}>始终提交完整 messages</option>
+      </select>
+      <small>推荐智能模式，避免百度窗口已有上下文后重复灌入客户端历史。</small>
+    </label>
+
+    <label class="span-2">输出方式
+      <select name="conversation_response_mode">
+        <option value="client" {% if values.conversation_response_mode == "client" %}selected{% endif %}>跟随客户端：客户端请求 stream 就流式，否则非流式</option>
+        <option value="stream" {% if values.conversation_response_mode == "stream" %}selected{% endif %}>强制流式：即使客户端未请求 stream 也返回 SSE</option>
+        <option value="buffered_stream" {% if values.conversation_response_mode == "buffered_stream" %}selected{% endif %}>内部缓冲一次性返回：保持 SSE 协议，但不逐字透传</option>
+        <option value="non_stream" {% if values.conversation_response_mode == "non_stream" %}selected{% endif %}>强制非流式 JSON：忽略客户端 stream=true</option>
+      </select>
+      <small>Tokeny、Cherry Studio 等客户端如果出现 DSML/工具标签泄漏，优先选择“内部缓冲一次性返回”。</small>
+    </label>
+
+    <label class="span-2">发给百度的最大字符数
+      <input type="number" min="0" step="1000" name="conversation_max_query_chars" value="{{ values.conversation_max_query_chars }}">
+      <small>用于避免百度接口返回 413。超过上限时，项目会保留最近上下文并省略较早历史；0 表示不限制。</small>
+    </label>
+
+    <label class="span-2">413 长度保护适用范围
+      <select name="conversation_max_query_scope">
+        <option value="all" {% if values.conversation_max_query_scope == "all" %}selected{% endif %}>全部请求：无状态、绑定首轮、绑定后续都裁剪</option>
+        <option value="stateless_and_first_turn" {% if values.conversation_max_query_scope == "stateless_and_first_turn" %}selected{% endif %}>推荐：仅无状态和绑定首轮，绑定窗口成功后不裁剪</option>
+        <option value="stateless_only" {% if values.conversation_max_query_scope == "stateless_only" %}selected{% endif %}>仅无状态：绑定模式完全不裁剪</option>
+        <option value="off" {% if values.conversation_max_query_scope == "off" %}selected{% endif %}>关闭：不做长度保护，超长时可能直接 413</option>
+      </select>
+      <small>绑定窗口已有百度 sessionId 后，通常只发最新消息，可选“推荐”避免不必要裁剪。</small>
+    </label>
+
+    <label class="span-2">客户端没有传 conversation_id 时
+      <select name="conversation_missing_id_strategy">
+        <option value="smart" {% if values.conversation_missing_id_strategy == "smart" %}selected{% endif %}>智能派生：API Key + IP + 模型 + 首条用户消息 hash</option>
+        <option value="strict" {% if values.conversation_missing_id_strategy == "strict" %}selected{% endif %}>严格模式：拒绝请求，要求客户端传 conversation_id</option>
+        <option value="ephemeral" {% if values.conversation_missing_id_strategy == "ephemeral" %}selected{% endif %}>每次新建：每个请求都创建新的本地会话</option>
+        <option value="fallback" {% if values.conversation_missing_id_strategy == "fallback" %}selected{% endif %}>旧兼容：API Key + IP + 模型，可能让多个客户端窗口串上下文</option>
+      </select>
+      <small>绑定模式必须先有本地会话键，第一轮成功后才能拿到百度 sessionId；这里决定客户端不传会话 ID 时如何生成本地会话键。</small>
+    </label>
+
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="conversation_fallback_binding" {% if values.conversation_fallback_binding == "true" %}checked{% endif %}>
+      客户端没有传 conversation_id 时，允许按 API Key + 来源 IP + 模型自动生成绑定会话
+    </label>
+
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="conversation_save_content" {% if values.conversation_save_content == "true" %}checked{% endif %}>
+      保存请求和响应预览，便于调试排查
+    </label>
+
+    <div class="span-2">
+      <button class="primary-action">保存会话设置</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>会话列表</h3>
+      <p>默认每页 20 条。可以按本地会话 ID、百度 sessionId、qid、模型、凭证名称、API Key、来源 IP、标题等关键词搜索。</p>
+    </div>
+    <form id="clear-form" method="post" action="/admin/conversations/clear" onsubmit="return confirm('确定要清空全部会话和轮次记录吗？该操作不可恢复。')">
+      <button class="danger-action">清空全部</button>
+    </form>
+  </div>
+
+  <form method="get" action="/admin/conversations" class="search-row">
+    <input name="q" value="{{ q }}" placeholder="搜索本地会话、百度 sessionId、qid、模型、凭证名、IP、API Key">
+    <button class="primary-action">搜索</button>
+    {% if q %}
+      <a class="secondary-link" href="/admin/conversations">清除</a>
+    {% endif %}
+  </form>
+
+  <div class="bulk-bar">
+    <div>
+      共 <b>{{ total }}</b> 条记录，第 <b>{{ page }}</b> / <b>{{ total_pages }}</b> 页
+      {% if q %}<span class="muted">，关键词：{{ q }}</span>{% endif %}
+    </div>
+    <div class="row-actions">
+      <button type="button" class="secondary-action" onclick="toggleConversationChecks(true)">全选本页</button>
+      <button type="button" class="secondary-action" onclick="toggleConversationChecks(false)">取消选择</button>
+      <button form="bulk-delete-form" class="danger-action" onclick="return confirm('确定删除选中的会话记录吗？')">删除选中</button>
+    </div>
+  </div>
+
+  <form id="bulk-delete-form" method="post" action="/admin/conversations/bulk-delete">
+    <input type="hidden" name="return_url" value="/admin/conversations?page={{ page }}{% if q %}&q={{ q | urlencode }}{% endif %}">
+  </form>
+
+  <div class="table-wrap">
+    <table class="data-table conversation-table">
+      <thead>
+        <tr>
+          <th class="check-col"></th>
+          <th>ID</th>
+          <th>本地会话</th>
+          <th>百度窗口</th>
+          <th>模型 / 凭证</th>
+          <th>轮次</th>
+          <th>状态</th>
+          <th>最近活跃</th>
+          <th class="right">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in items %}
+        <tr>
+          <td class="check-col">
+            <input form="bulk-delete-form" type="checkbox" name="conversation_ids" value="{{ item.id }}" class="conversation-check">
+          </td>
+          <td class="muted">#{{ item.id }}</td>
+          <td class="stacked-cell">
+            <code>{{ item.local_conversation_id }}</code>
+            <small>{{ item.title or "未记录标题" }}</small>
+            <small>IP：{{ item.source_ip or "-" }} / Key：{{ item.api_key_name or "-" }}</small>
+          </td>
+          <td class="stacked-cell">
+            {% if item.baidu_session_id %}
+              <code>{{ item.baidu_session_id }}</code>
+              <small><a href="https://chat.baidu.com/search/{{ item.baidu_session_id }}?enter_type=chat_url" target="_blank">打开百度窗口</a></small>
+            {% else %}
+              <span class="muted">尚未绑定</span>
+            {% endif %}
+            <small>last qid：{{ item.last_qid or "-" }}</small>
+            <small>last pkg：{{ item.last_pkg_id or "-" }}</small>
+          </td>
+          <td class="stacked-cell">
+            <span class="mini-tag">路由：{{ item.model or "-" }}</span>
+            <small>客户端：{{ item.requested_model or item.model or "-" }}</small>
+            <small>百度：{{ item.baidu_model or "-" }}</small>
+            <small>凭证：{{ item.credential_name or "匿名自动获取" }}</small>
+            {% if item.credential_id %}
+              <small>Cookie：固定凭证 #{{ item.credential_id }}</small>
+            {% elif item.cookie_snapshot %}
+              <small>Cookie：已保存匿名快照</small>
+            {% else %}
+              <small>Cookie：未绑定</small>
+            {% endif %}
+          </td>
+          <td>{{ item.rank }}</td>
+          <td>
+            {% if item.status == "active" %}
+              <span class="status-pill ok">active</span>
+            {% elif item.status == "error" %}
+              <span class="status-pill danger">error</span>
+            {% else %}
+              <span class="status-pill off">{{ item.status or "-" }}</span>
+            {% endif %}
+            {% if item.last_error %}
+              <small class="danger-text">{{ item.last_error[:120] }}</small>
+            {% endif %}
+          </td>
+          <td>
+            <small>{{ item.last_active_at }}</small>
+            <small>创建：{{ item.created_at }}</small>
+          </td>
+          <td class="right">
+            <div class="row-actions">
+              <a class="secondary-link" href="/admin/conversations/{{ item.id }}">详情</a>
+              <form method="post" action="/admin/conversations/{{ item.id }}/reset" onsubmit="return confirm('确定重置这个会话的百度窗口绑定吗？')">
+                <button class="secondary-action">重置</button>
+              </form>
+              <form method="post" action="/admin/conversations/{{ item.id }}/delete" onsubmit="return confirm('确定删除这个会话记录吗？')">
+                <input type="hidden" name="return_url" value="/admin/conversations?page={{ page }}{% if q %}&q={{ q | urlencode }}{% endif %}">
+                <button class="danger-action">删除</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="9" class="empty-state">暂无会话记录</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pagination">
+    {% if prev_page %}
+      <a class="secondary-link" href="/admin/conversations?page={{ prev_page }}{% if q %}&q={{ q | urlencode }}{% endif %}">上一页</a>
+    {% else %}
+      <span class="secondary-link disabled">上一页</span>
+    {% endif %}
+
+    <span>第 {{ page }} / {{ total_pages }} 页</span>
+
+    {% if next_page %}
+      <a class="secondary-link" href="/admin/conversations?page={{ next_page }}{% if q %}&q={{ q | urlencode }}{% endif %}">下一页</a>
+    {% else %}
+      <span class="secondary-link disabled">下一页</span>
+    {% endif %}
+  </div>
+</section>
+
+<script>
+function toggleConversationChecks(checked) {
+  document.querySelectorAll(".conversation-check").forEach(function (item) {
+    item.checked = checked;
+  });
+}
+</script>
+{% endblock %}

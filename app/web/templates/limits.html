@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>限流、安全与输出策略</h2>
+<form method="post" class="stack">
+  <label>全局 IP 白名单，逗号分隔；为空表示不限制
+    <input name="ip_whitelist" value="{{ values.ip_whitelist }}">
+  </label>
+  <label>全局 IP 黑名单，逗号分隔
+    <input name="ip_blacklist" value="{{ values.ip_blacklist }}">
+  </label>
+  <label>全局每分钟限流，按 API Key 统计；0 为不限
+    <input name="rate_limit_per_minute" value="{{ values.rate_limit_per_minute }}">
+  </label>
+  <label>日志保留天数
+    <input name="log_retention_days" value="{{ values.log_retention_days }}">
+  </label>
+  <label>长文输出策略
+    <select name="long_text_strategy">
+      <option value="stream_delta" {% if values.long_text_strategy == "stream_delta" %}selected{% endif %}>输出工作区增量</option>
+      <option value="summary" {% if values.long_text_strategy == "summary" %}selected{% endif %}>只输出普通总结</option>
+    </select>
+  </label>
+  <label><input type="checkbox" name="output_reasoning" {% if values.output_reasoning == "true" %}checked{% endif %}> 输出思考过程</label>
+  <label><input type="checkbox" name="output_image_urls" {% if values.output_image_urls == "true" %}checked{% endif %}> 输出图片 URL</label>
+  <label><input type="checkbox" name="auto_direct_answer" {% if values.auto_direct_answer == "true" %}checked{% endif %}> 默认使用 ai_directans 直接回答模式</label>
+  <label><input type="checkbox" name="proxy_file_downloads" {% if values.proxy_file_downloads == "true" %}checked{% endif %}> 文件下载代理缓存（预留）</label>
+  <label><input type="checkbox" name="mask_sensitive_logs" {% if values.mask_sensitive_logs == "true" %}checked{% endif %}> 日志脱敏</label>
+  <button>保存限流与安全设置</button>
+</form>
+{% endblock %}

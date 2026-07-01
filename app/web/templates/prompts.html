@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>内置提示词</h2>
+<form method="post" class="stack">
+  <label><input type="checkbox" name="enabled" {% if item and item.enabled %}checked{% endif %}> 开启</label>
+  <select name="mode">
+    <option value="first" {% if item and item.mode == "first" %}selected{% endif %}>首次推送</option>
+    <option value="every" {% if item and item.mode == "every" %}selected{% endif %}>每条推送</option>
+  </select>
+  <textarea name="content" rows="12">{{ item.content if item else "" }}</textarea>
+  <button>保存提示词</button>
+</form>
+{% endblock %}

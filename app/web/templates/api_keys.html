@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">访问控制</p>
+    <h2>API Key 管理</h2>
+    <p class="page-desc">为不同客户端分配独立 Key，并按模型、请求次数、字符额度和 IP 范围控制访问。</p>
+  </div>
+  <button type="button" class="primary-action" data-modal-open="create-key-modal">新增 API Key</button>
+</section>
+
+{% if new_key %}
+<section class="notice">
+  <strong>新 Key 只显示一次</strong>
+  <code>{{ new_key }}</code>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>Key 列表</h3>
+      <p>停用后客户端会立即无法继续调用接口。</p>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>名称</th>
+          <th>Key 预览</th>
+          <th>状态</th>
+          <th>模型权限</th>
+          <th>请求限额</th>
+          <th>字符额度</th>
+          <th>IP 规则</th>
+          <th class="right">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in items %}
+        <tr>
+          <td class="muted">#{{ item.id }}</td>
+          <td><strong>{{ item.name }}</strong></td>
+          <td><code>{{ item.key_preview }}</code></td>
+          <td>
+            <span class="status-pill {{ 'ok' if item.enabled else 'off' }}">
+              {{ "启用中" if item.enabled else "已停用" }}
+            </span>
+          </td>
+          <td>{{ item.allowed_models }}</td>
+          <td>
+            <span>总 {{ item.request_limit_total or 0 }}</span>
+            <small>每日 {{ item.request_limit_per_day or 0 }}</small>
+          </td>
+          <td>
+            <span>总 {{ item.token_limit_total or 0 }}</span>
+            <small>每日 {{ item.token_limit_per_day or 0 }}</small>
+          </td>
+          <td>
+            <small>白名单：{{ item.ip_whitelist or "不限制" }}</small>
+            <small>黑名单：{{ item.ip_blacklist or "无" }}</small>
+          </td>
+          <td class="right">
+            <div class="row-actions">
+              <button type="button" class="secondary-action" data-modal-open="edit-key-{{ item.id }}">编辑</button>
+              <form method="post" action="/admin/api-keys/{{ item.id }}/toggle">
+                <button class="{{ 'danger-action' if item.enabled else 'secondary-action' }}">
+                  {{ "停用" if item.enabled else "启用" }}
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="9" class="empty-state">还没有 API Key，请先新增一个。</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="modal-backdrop" id="create-key-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="create-key-title">
+    <div class="modal-head">
+      <div>
+        <h3 id="create-key-title">新增 API Key</h3>
+        <p>创建后完整 Key 只显示一次，请及时保存到客户端配置中。</p>
+      </div>
+      <button type="button" class="icon-button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" class="form-grid">
+      <label>名称<input name="name" placeholder="例如：默认客户端" required></label>
+      <label>允许模型<input name="allowed_models" value="*" placeholder="逗号分隔，例如 smart,deepseek-v4-pro；* 表示全部"></label>
+      <label>总请求次数<input type="number" min="0" name="request_limit_total" value="0" placeholder="0 表示不限"></label>
+      <label>每日请求次数<input type="number" min="0" name="request_limit_per_day" value="0" placeholder="0 表示不限"></label>
+      <label>总字符额度<input type="number" min="0" name="token_limit_total" value="0" placeholder="0 表示不限"></label>
+      <label>每日字符额度<input type="number" min="0" name="token_limit_per_day" value="0" placeholder="0 表示不限"></label>
+      <label class="span-2">IP 白名单<input name="ip_whitelist" placeholder="逗号分隔；为空表示不限制"></label>
+      <label class="span-2">IP 黑名单<input name="ip_blacklist" placeholder="逗号分隔"></label>
+      <div class="modal-actions span-2">
+        <button type="button" class="secondary-action" data-modal-close>取消</button>
+        <button class="primary-action">创建 API Key</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% for item in items %}
+<div class="modal-backdrop" id="edit-key-{{ item.id }}" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-key-title-{{ item.id }}">
+    <div class="modal-head">
+      <div>
+        <h3 id="edit-key-title-{{ item.id }}">编辑 API Key</h3>
+        <p>{{ item.name }} · {{ item.key_preview }}</p>
+      </div>
+      <button type="button" class="icon-button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" action="/admin/api-keys/{{ item.id }}/update" class="form-grid">
+      <label>名称<input name="name" value="{{ item.name }}" required></label>
+      <label>允许模型<input name="allowed_models" value="{{ item.allowed_models }}" placeholder="逗号分隔或 *"></label>
+      <label>总请求次数<input type="number" min="0" name="request_limit_total" value="{{ item.request_limit_total or 0 }}" placeholder="0 表示不限"></label>
+      <label>每日请求次数<input type="number" min="0" name="request_limit_per_day" value="{{ item.request_limit_per_day or 0 }}" placeholder="0 表示不限"></label>
+      <label>总字符额度<input type="number" min="0" name="token_limit_total" value="{{ item.token_limit_total or 0 }}" placeholder="0 表示不限"></label>
+      <label>每日字符额度<input type="number" min="0" name="token_limit_per_day" value="{{ item.token_limit_per_day or 0 }}" placeholder="0 表示不限"></label>
+      <label class="span-2">IP 白名单<input name="ip_whitelist" value="{{ item.ip_whitelist }}" placeholder="逗号分隔；为空表示不限制"></label>
+      <label class="span-2">IP 黑名单<input name="ip_blacklist" value="{{ item.ip_blacklist }}" placeholder="逗号分隔"></label>
+      <div class="modal-actions span-2">
+        <button type="button" class="secondary-action" data-modal-close>取消</button>
+        <button class="primary-action">保存设置</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+<script>
+document.querySelectorAll("[data-modal-open]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const modal = document.getElementById(button.dataset.modalOpen);
+    if (modal) modal.hidden = false;
+  });
+});
+document.querySelectorAll("[data-modal-close]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const modal = button.closest(".modal-backdrop");
+    if (modal) modal.hidden = true;
+  });
+});
+document.querySelectorAll(".modal-backdrop").forEach((backdrop) => {
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) backdrop.hidden = true;
+  });
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    document.querySelectorAll(".modal-backdrop:not([hidden])").forEach((modal) => modal.hidden = true);
+  }
+});
+</script>
+{% endblock %}

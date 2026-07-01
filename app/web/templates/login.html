@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>后台登录</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body class="login">
+  <form method="post" class="login-box">
+    <h1>后台登录</h1>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <label>密码 <input type="password" name="password" autofocus></label>
+    <button>登录</button>
+  </form>
+</body>
+</html>

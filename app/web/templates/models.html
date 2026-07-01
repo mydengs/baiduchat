@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">模型映射</p>
+    <h2>模型配置</h2>
+    <p class="page-desc">维护第三方客户端看到的 OpenAI 模型 ID，并映射到百度网页端实际使用的 modelName、思考模式和搜索参数。</p>
+  </div>
+  <button type="button" class="primary-action" data-modal-open="create-model-modal">新增模型</button>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>模型列表</h3>
+      <p>修改后会影响 `/v1/models` 返回结果，以及客户端请求模型时的上游参数。</p>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>OpenAI 模型 ID</th>
+          <th>百度 modelName</th>
+          <th>能力参数</th>
+          <th>请求场景</th>
+          <th>状态</th>
+          <th>备注</th>
+          <th class="right">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in items %}
+        <tr>
+          <td class="muted">#{{ item.id }}</td>
+          <td><code>{{ item.public_id }}</code></td>
+          <td><strong>{{ item.baidu_model }}</strong></td>
+          <td>
+            <span class="mini-tag">deepSearch={{ item.deep_search }}</span>
+            <span class="mini-tag">thinkMode={{ item.think_mode }}</span>
+          </td>
+          <td>
+            <small>source：{{ item.source }}</small>
+            <small>setype：{{ item.setype }}</small>
+          </td>
+          <td>
+            <span class="status-pill {{ 'ok' if item.enabled else 'off' }}">
+              {{ "启用中" if item.enabled else "已停用" }}
+            </span>
+          </td>
+          <td>{{ item.notes or "-" }}</td>
+          <td class="right">
+            <div class="row-actions">
+              <button type="button" class="secondary-action" data-modal-open="edit-model-{{ item.id }}">编辑</button>
+              <form method="post" action="/admin/models/{{ item.id }}/toggle">
+                <button class="{{ 'danger-action' if item.enabled else 'secondary-action' }}">
+                  {{ "停用" if item.enabled else "启用" }}
+                </button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="8" class="empty-state">还没有模型配置，请先新增一个。</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="modal-backdrop" id="create-model-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="create-model-title">
+    <div class="modal-head">
+      <div>
+        <h3 id="create-model-title">新增模型</h3>
+        <p>把客户端传入的模型名映射到百度 conversation 请求中的 usedModel 参数。</p>
+      </div>
+      <button type="button" class="icon-button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" class="form-grid">
+      <label>OpenAI 模型 ID<input name="public_id" placeholder="例如：deepseek-v4-pro" required></label>
+      <label>百度 modelName<input name="baidu_model" placeholder="例如：DeepSeek-V4" required></label>
+      <label>deepSearch<input name="deep_search" value="0" placeholder="0 或 1"></label>
+      <label>thinkMode<input name="think_mode" value="0" placeholder="0 或 1"></label>
+      <label>source<input name="source" value="pc_csaitab"></label>
+      <label>setype<input name="setype" value="csaitab"></label>
+      <label class="checkbox-line span-2"><input type="checkbox" name="enabled" checked> 启用这个模型</label>
+      <label class="span-2">备注<textarea name="notes" placeholder="记录抓包来源、适用场景或待验证事项"></textarea></label>
+      <div class="modal-actions span-2">
+        <button type="button" class="secondary-action" data-modal-close>取消</button>
+        <button class="primary-action">保存模型</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% for item in items %}
+<div class="modal-backdrop" id="edit-model-{{ item.id }}" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-model-title-{{ item.id }}">
+    <div class="modal-head">
+      <div>
+        <h3 id="edit-model-title-{{ item.id }}">编辑模型</h3>
+        <p>{{ item.public_id }} · {{ item.baidu_model }}</p>
+      </div>
+      <button type="button" class="icon-button" data-modal-close aria-label="关闭">×</button>
+    </div>
+    <form method="post" class="form-grid">
+      <input type="hidden" name="model_id" value="{{ item.id }}">
+      <label>OpenAI 模型 ID<input name="public_id" value="{{ item.public_id }}" required></label>
+      <label>百度 modelName<input name="baidu_model" value="{{ item.baidu_model }}" required></label>
+      <label>deepSearch<input name="deep_search" value="{{ item.deep_search }}" placeholder="0 或 1"></label>
+      <label>thinkMode<input name="think_mode" value="{{ item.think_mode }}" placeholder="0 或 1"></label>
+      <label>source<input name="source" value="{{ item.source }}"></label>
+      <label>setype<input name="setype" value="{{ item.setype }}"></label>
+      <label class="checkbox-line span-2"><input type="checkbox" name="enabled" {% if item.enabled %}checked{% endif %}> 启用这个模型</label>
+      <label class="span-2">备注<textarea name="notes" placeholder="记录抓包来源、适用场景或待验证事项">{{ item.notes }}</textarea></label>
+      <div class="modal-actions span-2">
+        <button type="button" class="secondary-action" data-modal-close>取消</button>
+        <button class="primary-action">保存修改</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+<script>
+document.querySelectorAll("[data-modal-open]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const modal = document.getElementById(button.dataset.modalOpen);
+    if (modal) modal.hidden = false;
+  });
+});
+document.querySelectorAll("[data-modal-close]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const modal = button.closest(".modal-backdrop");
+    if (modal) modal.hidden = true;
+  });
+});
+document.querySelectorAll(".modal-backdrop").forEach((backdrop) => {
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) backdrop.hidden = true;
+  });
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    document.querySelectorAll(".modal-backdrop:not([hidden])").forEach((modal) => modal.hidden = true);
+  }
+});
+</script>
+{% endblock %}
