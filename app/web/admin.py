@@ -151,6 +151,8 @@ def tools_page(request: Request, db: Session = Depends(get_db), _: None = Depend
         for key in [
             "tool_call_mode",
             "tool_client_profile",
+            "document_output_strategy",
+            "baidu_native_document_policy",
             "tool_buffer_timeout_ms",
             "tool_max_buffer_chars",
             "tool_parse_retries",
@@ -174,6 +176,8 @@ def update_tools(
     request: Request,
     tool_call_mode: str = Form("auto"),
     tool_client_profile: str = Form("auto"),
+    document_output_strategy: str = Form("auto"),
+    baidu_native_document_policy: str = Form("explicit_only"),
     tool_buffer_timeout_ms: str = Form("60000"),
     tool_max_buffer_chars: str = Form("300000"),
     tool_parse_retries: str = Form("1"),
@@ -194,6 +198,10 @@ def update_tools(
         tool_call_mode = "auto"
     if tool_client_profile not in {"auto", "openai", "cherry", "cline", "chatbox", "openwebui", "lobe", "hermes", "tokeny"}:
         tool_client_profile = "auto"
+    if document_output_strategy not in {"auto", "client_tools", "baidu_native", "text"}:
+        document_output_strategy = "auto"
+    if baidu_native_document_policy not in {"explicit_only", "allow", "deny"}:
+        baidu_native_document_policy = "explicit_only"
     if tool_parse_failure_strategy not in {"clean_text", "error", "raw_text"}:
         tool_parse_failure_strategy = "clean_text"
     if tool_repeat_protection_scope not in {"off", "delete_move", "write", "all"}:
@@ -215,6 +223,8 @@ def update_tools(
     updates = {
         "tool_call_mode": tool_call_mode,
         "tool_client_profile": tool_client_profile,
+        "document_output_strategy": document_output_strategy,
+        "baidu_native_document_policy": baidu_native_document_policy,
         "tool_buffer_timeout_ms": tool_buffer_timeout_ms,
         "tool_max_buffer_chars": tool_max_buffer_chars,
         "tool_parse_retries": tool_parse_retries,

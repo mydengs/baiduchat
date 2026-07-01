@@ -285,6 +285,7 @@ def _tool_prompt(
     profile: str = "auto",
     after_tool_result: bool = False,
     loop_protection: bool = True,
+    route_instruction: str = "",
 ) -> str:
     if not tools or tool_choice == "none":
         return ""
@@ -309,6 +310,8 @@ def _tool_prompt(
                 "- If you notice file content contains mojibake, read the source again and regenerate clean UTF-8 Chinese before calling modify_file.",
             ]
         )
+    if route_instruction:
+        lines.extend(["Output routing rules:", route_instruction])
     if after_tool_result and loop_protection:
         lines.extend(
             [
@@ -337,8 +340,9 @@ def _append_tool_prompt(
     profile: str = "auto",
     after_tool_result: bool = False,
     loop_protection: bool = True,
+    route_instruction: str = "",
 ) -> str:
-    prompt = _tool_prompt(tools, tool_choice, profile, after_tool_result, loop_protection)
+    prompt = _tool_prompt(tools, tool_choice, profile, after_tool_result, loop_protection, route_instruction)
     if not prompt:
         return query
     return f"{query}\n\n{prompt}".strip()
@@ -856,6 +860,87 @@ def _tool_client_profile(db: Session) -> str:
     profile = get_setting(db, "tool_client_profile", "auto").lower()
     allowed = {"auto", "openai", "cherry", "cline", "chatbox", "openwebui", "lobe", "hermes", "tokeny"}
     return profile if profile in allowed else "auto"
+
+
+def _document_output_strategy(db: Session) -> str:
+    strategy = get_setting(db, "document_output_strategy", "auto").lower()
+    return strategy if strategy in {"auto", "client_tools", "baidu_native", "text"} else "auto"
+
+
+def _baidu_native_document_policy(db: Session) -> str:
+    policy = get_setting(db, "baidu_native_document_policy", "explicit_only").lower()
+    return policy if policy in {"explicit_only", "allow", "deny"} else "explicit_only"
+
+
+def _has_tool(tools: list[dict[str, Any]] | None, names: set[str]) -> bool:
+    return bool(_tool_function_names(tools) & names)
+
+
+def _looks_like_image_task(query: str) -> bool:
+    lowered = query.lower()
+    keywords = ("画图", "图片", "图像", "插画", "海报", "生图", "生成图", "image", "photo", "poster")
+    return any(keyword in lowered for keyword in keywords)
+
+
+def _explicit_baidu_document_intent(query: str) -> bool:
+    lowered = query.lower()
+    keywords = ("word", "pdf", "下载", "可下载", "百度文档", "文档卡片", "工作区文档", "docx", "ppt")
+    return any(keyword in lowered for keyword in keywords)
+
+
+def _client_file_write_intent(query: str) -> bool:
+    lowered = query.lower()
+    if _looks_like_image_task(query):
+        return False
+    write_keywords = (
+        "保存到", "写入", "创建文件", "创建文档", "生成文件", "新建文件", "本地文件", "客户端", "项目目录",
+        "当前项目", "对应目录", "目录文档", "md文件", ".md", ".txt", "modify_file", "write_file",
+    )
+    return any(keyword in lowered for keyword in write_keywords)
+
+
+def _output_route_instruction(db: Session, query: str, tools: list[dict[str, Any]] | None) -> str:
+    if not tools:
+        return ""
+    strategy = _document_output_strategy(db)
+    native_policy = _baidu_native_document_policy(db)
+    has_file_writer = _has_tool(tools, {"modify_file", "write_file", "create_file", "edit_file"})
+    if not has_file_writer or _looks_like_image_task(query):
+        return ""
+
+    explicit_native = _explicit_baidu_document_intent(query)
+    client_write_intent = _client_file_write_intent(query)
+    force_client = strategy == "client_tools" or (strategy == "auto" and client_write_intent and not explicit_native)
+    prefer_native = strategy == "baidu_native" or (native_policy == "allow" and explicit_native)
+
+    if strategy == "text":
+        return (
+            "- The admin output route is text-only. Do not force client file tools unless the user explicitly asks to call a tool."
+        )
+    if prefer_native and native_policy != "deny":
+        return (
+            "- The user/admin route allows Baidu native document output for this request. "
+            "You may use native document/workspace/download style output when it matches the user request."
+        )
+    if native_policy == "deny" and explicit_native:
+        return (
+            "- Baidu native document/workspace/download output is disabled by admin policy. "
+            "If a file must be created and a client file-writing tool is available, use that tool instead."
+        )
+    if force_client:
+        return (
+            "- The user is asking to create/save/write a document or text file in the client project/workspace. "
+            "You MUST complete this by calling the client file-writing tool such as modify_file/write_file. "
+            "Do not only output the document body as normal prose. Do not create a Baidu native workspace document/card for this task. "
+            "Do not wait for another confirmation when the target path or filename is already clear from the request/context. "
+            "The assistant response must contain only the DSML tool-call structure."
+        )
+    if native_policy == "explicit_only":
+        return (
+            "- Use Baidu native document/workspace/download output only when the user explicitly asks for Word/PDF/download/Baidu document. "
+            "If the user asks to save into the client project or a local path, use the client file-writing tool."
+        )
+    return ""
 
 
 def _tool_failure_strategy(db: Session) -> str:
@@ -1441,6 +1526,7 @@ async def chat_completions(
             _tool_client_profile(db),
             has_recent_tool_result(messages),
             _tool_loop_protection(db),
+            _output_route_instruction(db, query, body.tools),
         )
     query = _fit_query_for_baidu(db, query, "", "/v1/chat/completions", binding)
     _update_turn_prompt_preview(db, binding, query)
@@ -1804,6 +1890,7 @@ async def responses(
                 _tool_client_profile(db),
                 has_recent_tool_result(messages_dict),
                 _tool_loop_protection(db),
+                _output_route_instruction(db, query, body.tools),
             )
         query = _fit_query_for_baidu(db, query, "", "/v1/responses", binding)
         _update_turn_prompt_preview(db, binding, query)

@@ -42,6 +42,8 @@ DEFAULT_SETTINGS = {
     "baidu_empty_response_retry": ("true", "百度上游返回 200 但没有正文或工具调用时，绑定/混合模式下自动重置百度窗口并重试一次。"),
     "tool_call_mode": ("auto", "工具调用模式：auto 自动；force_buffer 请求带工具时强制缓冲；stream_compat 流式兼容；off 关闭工具调用解析。"),
     "tool_client_profile": ("auto", "客户端工具调用适配：auto、openai、cherry、cline、chatbox、openwebui、lobe、hermes。"),
+    "document_output_strategy": ("auto", "文档/文件输出路由策略：auto 自动判断；client_tools 明确文件任务优先客户端工具；baidu_native 优先百度原生文档；text 普通文本输出。"),
+    "baidu_native_document_policy": ("explicit_only", "百度原生文档能力策略：explicit_only 仅用户明确要求 Word/PDF/下载/百度文档时允许；allow 允许；deny 禁止。"),
     "tool_buffer_timeout_ms": ("60000", "工具调用流式缓冲超时时间，单位毫秒；当前主要用于配置展示和后续超时保护。"),
     "tool_max_buffer_chars": ("300000", "工具调用最大缓冲字符数，超过后根据失败兜底策略处理。"),
     "tool_parse_retries": ("1", "工具调用解析失败后的修复重试次数。"),

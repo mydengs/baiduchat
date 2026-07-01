@@ -33,6 +33,23 @@
       </select>
       <small>后续可继续针对具体客户端微调工具格式和兜底策略。</small>
     </label>
+    <label>文档/文件输出路由
+      <select name="document_output_strategy">
+        <option value="auto" {% if values.document_output_strategy == "auto" %}selected{% endif %}>自动判断：明确本地路径/保存文件时优先客户端工具，其它场景不强制</option>
+        <option value="client_tools" {% if values.document_output_strategy == "client_tools" %}selected{% endif %}>优先客户端工具：文档/文件任务尽量用 modify_file/write_file 创建到客户端项目</option>
+        <option value="baidu_native" {% if values.document_output_strategy == "baidu_native" %}selected{% endif %}>优先百度原生文档：允许百度工作区、文档卡片、下载能力</option>
+        <option value="text" {% if values.document_output_strategy == "text" %}selected{% endif %}>仅文本输出：不主动要求文件工具或百度文档</option>
+      </select>
+      <small>用于解决“要求保存到客户端文件却只输出正文”的问题。不会影响图片任务；图片仍按图片生成链路处理。</small>
+    </label>
+    <label>百度原生文档能力
+      <select name="baidu_native_document_policy">
+        <option value="explicit_only" {% if values.baidu_native_document_policy == "explicit_only" %}selected{% endif %}>仅明确要求时允许：Word/PDF/下载/百度文档/文档卡片</option>
+        <option value="allow" {% if values.baidu_native_document_policy == "allow" %}selected{% endif %}>允许：模型可使用百度工作区文档能力</option>
+        <option value="deny" {% if values.baidu_native_document_policy == "deny" %}selected{% endif %}>禁止：要求优先使用客户端工具或普通文本</option>
+      </select>
+      <small>如果你要让百度生成 Word/PDF/可下载文档，不要设为“禁止”。如果你要 Tokeny/Cline 创建本地文件，建议使用“仅明确要求时允许”。</small>
+    </label>
     <label>缓冲超时（毫秒）
       <input type="number" min="1000" step="1000" name="tool_buffer_timeout_ms" value="{{ values.tool_buffer_timeout_ms }}">
       <small>用于长工具调用的缓冲窗口设置。</small>
