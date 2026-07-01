@@ -566,6 +566,60 @@ small {
   margin-bottom: 14px;
 }
 
+.request-overview-panel {
+  margin-top: 18px;
+}
+
+.request-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  margin-bottom: 12px;
+  padding: 12px 14px;
+}
+
+.switch-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.switch-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: #334155;
+  font-weight: 700;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.switch-line input {
+  width: auto;
+}
+
+.request-table td {
+  vertical-align: middle;
+}
+
+.request-table .stacked-cell {
+  min-width: 190px;
+}
+
+.request-table td:nth-child(3) code,
+.request-table td:nth-child(4) {
+  white-space: nowrap;
+}
+
 .detail-lines {
   display: flex;
   flex-wrap: wrap;
@@ -644,6 +698,13 @@ pre {
 
   .form-grid,
   .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .request-toolbar,
+  .switch-form {
+    align-items: stretch;
+    display: grid;
     grid-template-columns: 1fr;
   }
 }

@@ -350,6 +350,21 @@ class BaiduAdapter:
             baidu_session_id=baidu_session_id,
         )
         headers = self._conversation_headers_for_session(context, query, model, request_rank, baidu_session_id)
+        if get_setting(self.db, "log_upstream_model", "true").lower() == "true":
+            used_model = payload.get("message", {}).get("searchInfo", {}).get("usedModel", {})
+            system_log(
+                self.db,
+                "INFO",
+                "upstream_model",
+                "conversation model summary "
+                f"public_model={public_model} "
+                f"baidu_model={model.baidu_model} "
+                f"usedModel={json.dumps(used_model, ensure_ascii=False, separators=(',', ':'))} "
+                f"source={model.source} setype={model.setype} "
+                f"isDeepseek={headers.get('isDeepseek')} "
+                f"rank={request_rank} bound_session={baidu_session_id or '-'} "
+                f"credential={context.credential_name}",
+            )
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
                 "POST",

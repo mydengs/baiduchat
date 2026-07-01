@@ -1,16 +1,132 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>概览</h2>
+<section class="page-header">
+  <div>
+    <p class="eyebrow">运行概览</p>
+    <h2>概览</h2>
+    <p class="page-desc">查看网关基础资源与最近请求记录。请求记录默认每页 20 条，可翻页查看历史，也可以按需暂停记录。</p>
+  </div>
+</section>
+
 <section class="grid">
   <div class="metric"><b>{{ stats.models }}</b><span>模型</span></div>
   <div class="metric"><b>{{ stats.credentials }}</b><span>凭证</span></div>
   <div class="metric"><b>{{ stats.api_keys }}</b><span>API Key</span></div>
   <div class="metric"><b>{{ stats.requests }}</b><span>请求记录</span></div>
 </section>
-<h3>最近请求</h3>
-<table><tr><th>时间</th><th>接口</th><th>模型</th><th>IP</th><th>耗时</th><th>状态</th></tr>
-{% for item in recent %}
-<tr><td>{{ item.created_at }}</td><td>{{ item.endpoint }}</td><td>{{ item.model }}</td><td>{{ item.source_ip }}</td><td>{{ item.duration_ms }}ms</td><td>{{ item.status_code }}</td></tr>
-{% endfor %}
-</table>
+
+{% if request.query_params.get("updated") == "settings" %}
+  <section class="notice success-notice">请求记录开关已保存。</section>
+{% elif request.query_params.get("updated") == "clear" %}
+  <section class="notice success-notice">已清空请求记录。</section>
+{% endif %}
+
+<section class="panel request-overview-panel">
+  <div class="panel-head">
+    <div>
+      <h3>最近请求</h3>
+      <p>显示最近 20 条请求记录。更多历史可使用分页查看；删除操作只影响请求记录，不会清理系统日志和后台审计。</p>
+    </div>
+    <form method="post" action="/admin/request-logs/settings" class="switch-form">
+      <label class="switch-line">
+        <input type="checkbox" name="enable_request_logs" {% if log_settings.enable_request_logs == "true" %}checked{% endif %}>
+        <span>记录请求</span>
+      </label>
+      <button class="secondary-action">保存</button>
+    </form>
+  </div>
+
+  <div class="request-toolbar">
+    <div>
+      <b>第 {{ req_meta.page }} / {{ req_meta.total_pages }} 页</b>
+      <small>共 {{ req_meta.total }} 条，每页 20 条</small>
+    </div>
+    <div class="row-actions">
+      <button type="button" class="secondary-action" onclick="toggleChecks('request-log-check', true)">全选本页</button>
+      <button type="button" class="secondary-action" onclick="toggleChecks('request-log-check', false)">取消选择</button>
+      <button form="request-bulk-delete-form" class="danger-action" onclick="return confirm('确定删除选中的请求记录吗？')">删除选中</button>
+      <form method="post" action="/admin/request-logs/clear" onsubmit="return confirm('确定清空全部请求记录吗？该操作不可恢复。')">
+        <button class="danger-action">清空全部</button>
+      </form>
+    </div>
+  </div>
+
+  <form id="request-bulk-delete-form" method="post" action="/admin/request-logs/bulk-delete">
+    <input type="hidden" name="return_url" value="/admin?req_page={{ req_meta.page }}">
+  </form>
+
+  <div class="table-wrap">
+    <table class="data-table request-table">
+      <thead>
+        <tr>
+          <th class="check-col"></th>
+          <th>时间</th>
+          <th>接口</th>
+          <th>模型</th>
+          <th>来源</th>
+          <th>耗时</th>
+          <th>字符</th>
+          <th>状态</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for item in recent %}
+        <tr>
+          <td class="check-col"><input form="request-bulk-delete-form" type="checkbox" name="log_ids" value="{{ item.id }}" class="request-log-check"></td>
+          <td class="stacked-cell">
+            <strong>{{ item.created_at.strftime("%Y-%m-%d") if item.created_at else "-" }}</strong>
+            <small>{{ item.created_at.strftime("%H:%M:%S") if item.created_at else "" }}</small>
+            <small><code>{{ item.request_id }}</code></small>
+          </td>
+          <td><code>{{ item.endpoint }}</code></td>
+          <td>{{ item.model }}</td>
+          <td>
+            <small>IP：{{ item.source_ip or "-" }}</small>
+            <small>Key：{{ item.api_key_name or "-" }}</small>
+          </td>
+          <td><b>{{ item.duration_ms }}</b><small>ms</small></td>
+          <td>
+            <small>输入：{{ item.prompt_chars }}</small>
+            <small>输出：{{ item.completion_chars }}</small>
+          </td>
+          <td>
+            {% if item.status_code >= 400 %}
+              <span class="status-pill danger">{{ item.status_code }}</span>
+            {% else %}
+              <span class="status-pill ok">{{ item.status_code }}</span>
+            {% endif %}
+            {% if item.error %}
+              <small class="danger-text">{{ item.error }}</small>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8" class="empty-state">暂无请求记录</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pagination">
+    {% if req_meta.prev_page %}
+      <a class="secondary-link" href="/admin?req_page={{ req_meta.prev_page }}">上一页</a>
+    {% else %}
+      <span class="secondary-link disabled">上一页</span>
+    {% endif %}
+    <span>第 {{ req_meta.page }} / {{ req_meta.total_pages }} 页，共 {{ req_meta.total }} 条</span>
+    {% if req_meta.next_page %}
+      <a class="secondary-link" href="/admin?req_page={{ req_meta.next_page }}">下一页</a>
+    {% else %}
+      <span class="secondary-link disabled">下一页</span>
+    {% endif %}
+  </div>
+</section>
+
+<script>
+function toggleChecks(className, checked) {
+  document.querySelectorAll("." + className).forEach(function (item) {
+    item.checked = checked;
+  });
+}
+</script>
 {% endblock %}

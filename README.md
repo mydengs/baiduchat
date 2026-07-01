@@ -66,6 +66,37 @@ http://127.0.0.1:8000/admin
 bash scripts/install.sh --port 8000 --admin-password 'your-password'
 ```
 
+也可以不带参数交互式安装：
+
+```bash
+sudo bash scripts/install.sh
+```
+
+如果已经在 `scripts/` 目录下，也可以运行：
+
+```bash
+sudo bash install.sh
+```
+
+多实例部署时，为每个项目目录选择不同端口即可。默认 systemd 服务名会按端口生成，例如：
+
+```text
+baidu-openai-proxy-8000.service
+baidu-openai-proxy-8001.service
+```
+
+如需自定义服务名：
+
+```bash
+sudo bash scripts/install.sh --port 8001 --admin-password 'your-password' --service-name baidu-openai-proxy-8001
+```
+
+如只初始化项目、不安装开机自启服务：
+
+```bash
+bash scripts/install.sh --port 8000 --admin-password 'your-password' --no-service
+```
+
 脚本会：
 
 - 创建 `.venv`
@@ -73,7 +104,57 @@ bash scripts/install.sh --port 8000 --admin-password 'your-password'
 - 初始化 `.env`
 - 初始化 SQLite 数据库
 - 生成默认 API Key
-- 创建并启动 systemd 服务
+- 创建并启动 systemd 服务，并执行 `systemctl enable` 支持开机自启
+
+## Windows 一键部署
+
+双击或在终端运行：
+
+```bat
+scripts\install_windows.bat
+```
+
+脚本会交互询问端口和后台密码，然后自动：
+
+- 检测 Python 3
+- 创建 `.venv`
+- 安装 `requirements.txt`
+- 初始化 `.env`
+- 初始化 SQLite 数据库
+- 生成默认 API Key
+- 创建 Windows 计划任务并启动当前实例
+
+也可以用参数非交互安装：
+
+```powershell
+.\scripts\install_windows.bat -Port 8000 -AdminPassword "your-password"
+```
+
+默认计划任务名按端口生成：
+
+```text
+BaiduOpenAIProxy-8000
+BaiduOpenAIProxy-8001
+```
+
+多实例部署时，把项目放到不同目录，并使用不同端口：
+
+```powershell
+.\scripts\install_windows.bat -Port 8000 -AdminPassword "password-a"
+.\scripts\install_windows.bat -Port 8001 -AdminPassword "password-b"
+```
+
+如只安装依赖和初始化配置，不创建开机自启任务：
+
+```powershell
+.\scripts\install_windows.bat -Port 8000 -AdminPassword "your-password" -NoStartup
+```
+
+如只初始化不立即启动：
+
+```powershell
+.\scripts\install_windows.bat -Port 8000 -AdminPassword "your-password" -NoStart
+```
 
 ## OpenAI 调用示例
 

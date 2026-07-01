@@ -1,10 +1,37 @@
 {% extends "base.html" %}
+{% macro pager(meta, target, q) -%}
+  <div class="pagination">
+    {% if meta.prev_page %}
+      <a class="secondary-link" href="/admin/logs?{{ target }}={{ meta.prev_page }}{% if q %}&q={{ q | urlencode }}{% endif %}">上一页</a>
+    {% else %}
+      <span class="secondary-link disabled">上一页</span>
+    {% endif %}
+    <span>第 {{ meta.page }} / {{ meta.total_pages }} 页，共 {{ meta.total }} 条</span>
+    {% if meta.next_page %}
+      <a class="secondary-link" href="/admin/logs?{{ target }}={{ meta.next_page }}{% if q %}&q={{ q | urlencode }}{% endif %}">下一页</a>
+    {% else %}
+      <span class="secondary-link disabled">下一页</span>
+    {% endif %}
+  </div>
+{%- endmacro %}
+
+{% macro bulk_bar(form_id, check_class, total) -%}
+  <div class="bulk-bar">
+    <div>当前筛选共 <b>{{ total }}</b> 条，默认每页 20 条。</div>
+    <div class="row-actions">
+      <button type="button" class="secondary-action" onclick="toggleChecks('{{ check_class }}', true)">全选本页</button>
+      <button type="button" class="secondary-action" onclick="toggleChecks('{{ check_class }}', false)">取消选择</button>
+      <button form="{{ form_id }}" class="danger-action" onclick="return confirm('确定删除选中的日志记录吗？')">删除选中</button>
+    </div>
+  </div>
+{%- endmacro %}
+
 {% block content %}
 <section class="page-header">
   <div>
     <p class="eyebrow">排障与审计</p>
     <h2>日志统计</h2>
-    <p class="page-desc">用于排查第三方客户端请求、百度上游错误、工具调用解析、凭证调度和后台操作。可以用 request_id、trace、模型、IP、API Key、错误内容等关键词搜索。</p>
+    <p class="page-desc">用于排查第三方客户端请求、百度上游错误、工具调用解析、凭证调度和后台操作。支持关键词搜索、分页查看、批量删除和一键清空。</p>
   </div>
   <a class="button-link" href="/admin/logs/export">导出请求 CSV</a>
 </section>
@@ -12,19 +39,85 @@
 <section class="grid">
   <div class="metric"><b>{{ stats.request_total }}</b><span>请求总数</span></div>
   <div class="metric"><b>{{ stats.request_failed }}</b><span>失败请求</span></div>
-  <div class="metric"><b>{{ stats.system_errors }}</b><span>系统告警/错误</span></div>
+  <div class="metric"><b>{{ stats.system_errors }}</b><span>系统警告/错误</span></div>
   <div class="metric"><b>{{ stats.audits }}</b><span>后台操作</span></div>
+</section>
+
+{% if request.query_params.get("updated") == "clear" %}
+  <section class="notice ok-notice">已清空日志记录。</section>
+{% elif request.query_params.get("updated") == "cleanup" %}
+  <section class="notice ok-notice">已按保留天数清理旧日志。</section>
+{% elif request.query_params.get("updated") == "settings" %}
+  <section class="notice ok-notice">日志开关设置已保存。</section>
+{% endif %}
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>日志开关</h3>
+      <p>集中控制项目是否记录请求、系统事件和调试正文。请求日志与系统日志建议开发阶段保持开启；正文类日志可能包含敏感内容，只建议排查问题时短期开启。</p>
+    </div>
+  </div>
+  <form method="post" action="/admin/logs/settings" class="form-grid">
+    <label class="checkbox-line">
+      <input type="checkbox" name="enable_request_logs" {% if log_settings.enable_request_logs == "true" %}checked{% endif %}>
+      启用请求日志与统计
+      <small>记录来源 IP、API Key、模型、接口、耗时、状态码和字符量。关闭后“请求日志”不会继续新增记录。</small>
+    </label>
+
+    <label class="checkbox-line">
+      <input type="checkbox" name="enable_system_logs" {% if log_settings.enable_system_logs == "true" %}checked{% endif %}>
+      启用系统运行日志
+      <small>记录凭证调度、会话绑定、上游异常、工具解析等内部事件。排查问题时很重要。</small>
+    </label>
+
+    <label class="checkbox-line">
+      <input type="checkbox" name="log_upstream_model" {% if log_settings.log_upstream_model == "true" %}checked{% endif %}>
+      记录百度上游模型参数摘要
+      <small>只记录模型名、thinkMode、isDeepseek、百度窗口 ID 等摘要，不记录 Cookie 和正文。用于确认是否把正确模型发给百度。</small>
+    </label>
+
+    <label class="checkbox-line">
+      <input type="checkbox" name="log_request_body" {% if log_settings.log_request_body == "true" %}checked{% endif %}>
+      记录客户端请求正文
+      <small>会保存第三方客户端传入的 messages、tools 等内容。可能包含用户隐私或文件内容，建议只在短期调试时开启。</small>
+    </label>
+
+    <label class="checkbox-line">
+      <input type="checkbox" name="log_upstream_body" {% if log_settings.log_upstream_body == "true" %}checked{% endif %}>
+      记录百度上游请求/响应正文
+      <small>用于分析百度接口返回、SSE、工具调用标签等细节。内容量大且敏感，建议定位问题后关闭。</small>
+    </label>
+
+    <label class="checkbox-line">
+      <input type="checkbox" name="mask_sensitive_logs" {% if log_settings.mask_sensitive_logs == "true" %}checked{% endif %}>
+      日志脱敏显示
+      <small>展示日志时尽量隐藏 Cookie、token、authorization 等敏感字段。建议保持开启。</small>
+    </label>
+
+    <label class="span-2">日志保留天数
+      <input type="number" min="1" name="log_retention_days" value="{{ log_settings.log_retention_days or '30' }}">
+      <small>点击“按保留天数清理旧日志”时，会按这个天数删除更早的请求日志、系统日志和操作审计。</small>
+    </label>
+
+    <div class="span-2">
+      <button class="primary-action">保存日志开关</button>
+    </div>
+  </form>
 </section>
 
 <section class="panel">
   <div class="panel-head">
     <div>
       <h3>检索与清理</h3>
-      <p>建议排查时先复制请求日志里的 request_id，再用该值搜索系统日志中的 trace 信息。</p>
+      <p>可以用 request_id、trace、模型、IP、API Key、模块名或错误内容搜索。清空全部会删除请求日志、系统日志和操作审计记录。</p>
     </div>
+    <form method="post" action="/admin/logs/clear" onsubmit="return confirm('确定清空全部日志记录吗？该操作不可恢复。')">
+      <button class="danger-action">清空全部日志</button>
+    </form>
   </div>
   <form method="get" action="/admin/logs" class="search-row">
-    <input name="q" value="{{ q }}" placeholder="搜索 request_id / trace / 模型 / IP / API Key / 错误内容">
+    <input name="q" value="{{ q }}" placeholder="搜索 request_id / trace / 模型 / IP / API Key / 模块 / 错误内容">
     <button class="primary-action">搜索</button>
     {% if q %}
       <a class="secondary-link" href="/admin/logs">清除</a>
@@ -42,10 +135,18 @@
       <p>记录 OpenAI 兼容接口调用结果、耗时、字符量和错误。request_id 是串联排障的核心标识。</p>
     </div>
   </div>
+
+  {{ bulk_bar("request-bulk-delete-form", "request-log-check", req_meta.total) }}
+  <form id="request-bulk-delete-form" method="post" action="/admin/logs/bulk-delete">
+    <input type="hidden" name="log_type" value="request">
+    <input type="hidden" name="return_url" value="/admin/logs?req_page={{ req_meta.page }}{% if q %}&q={{ q | urlencode }}{% endif %}">
+  </form>
+
   <div class="table-wrap">
     <table class="data-table log-table">
       <thead>
         <tr>
+          <th class="check-col"></th>
           <th>时间</th>
           <th>request_id</th>
           <th>接口</th>
@@ -60,6 +161,7 @@
       <tbody>
       {% for item in req_logs %}
         <tr>
+          <td class="check-col"><input form="request-bulk-delete-form" type="checkbox" name="log_ids" value="{{ item.id }}" class="request-log-check"></td>
           <td><small>{{ item.created_at }}</small></td>
           <td><code>{{ item.request_id }}</code></td>
           <td>{{ item.endpoint }}</td>
@@ -83,24 +185,33 @@
           <td class="log-message">{{ item.error or "-" }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="9" class="empty-state">暂无请求日志</td></tr>
+        <tr><td colspan="10" class="empty-state">暂无请求日志</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
+  {{ pager(req_meta, "req_page", q) }}
 </section>
 
 <section class="panel">
   <div class="panel-head">
     <div>
       <h3>系统日志</h3>
-      <p>记录凭证、会话绑定、工具调用解析、上游请求等内部事件。后续会继续把 trace_id 贯穿到更多模块。</p>
+      <p>记录凭证、会话绑定、工具调用解析、上游请求等内部事件。</p>
     </div>
   </div>
+
+  {{ bulk_bar("system-bulk-delete-form", "system-log-check", sys_meta.total) }}
+  <form id="system-bulk-delete-form" method="post" action="/admin/logs/bulk-delete">
+    <input type="hidden" name="log_type" value="system">
+    <input type="hidden" name="return_url" value="/admin/logs?sys_page={{ sys_meta.page }}{% if q %}&q={{ q | urlencode }}{% endif %}">
+  </form>
+
   <div class="table-wrap">
     <table class="data-table log-table">
       <thead>
         <tr>
+          <th class="check-col"></th>
           <th>时间</th>
           <th>级别</th>
           <th>模块</th>
@@ -110,6 +221,7 @@
       <tbody>
       {% for item in sys_logs %}
         <tr>
+          <td class="check-col"><input form="system-bulk-delete-form" type="checkbox" name="log_ids" value="{{ item.id }}" class="system-log-check"></td>
           <td><small>{{ item.created_at }}</small></td>
           <td>
             {% if item.level == "ERROR" %}
@@ -124,11 +236,12 @@
           <td class="log-message">{{ item.message }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="4" class="empty-state">暂无系统日志</td></tr>
+        <tr><td colspan="5" class="empty-state">暂无系统日志</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
+  {{ pager(sys_meta, "sys_page", q) }}
 </section>
 
 <section class="panel">
@@ -138,10 +251,18 @@
       <p>记录后台登录、配置修改、删除、清理等管理操作。</p>
     </div>
   </div>
+
+  {{ bulk_bar("audit-bulk-delete-form", "audit-log-check", audit_meta.total) }}
+  <form id="audit-bulk-delete-form" method="post" action="/admin/logs/bulk-delete">
+    <input type="hidden" name="log_type" value="audit">
+    <input type="hidden" name="return_url" value="/admin/logs?audit_page={{ audit_meta.page }}{% if q %}&q={{ q | urlencode }}{% endif %}">
+  </form>
+
   <div class="table-wrap">
     <table class="data-table log-table">
       <thead>
         <tr>
+          <th class="check-col"></th>
           <th>时间</th>
           <th>操作者</th>
           <th>IP</th>
@@ -153,6 +274,7 @@
       <tbody>
       {% for item in audits %}
         <tr>
+          <td class="check-col"><input form="audit-bulk-delete-form" type="checkbox" name="log_ids" value="{{ item.id }}" class="audit-log-check"></td>
           <td><small>{{ item.created_at }}</small></td>
           <td>{{ item.actor }}</td>
           <td>{{ item.source_ip }}</td>
@@ -161,10 +283,19 @@
           <td class="log-message">{{ item.detail }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="6" class="empty-state">暂无操作审计</td></tr>
+        <tr><td colspan="7" class="empty-state">暂无操作审计</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
+  {{ pager(audit_meta, "audit_page", q) }}
 </section>
+
+<script>
+function toggleChecks(className, checked) {
+  document.querySelectorAll("." + className).forEach(function (item) {
+    item.checked = checked;
+  });
+}
+</script>
 {% endblock %}

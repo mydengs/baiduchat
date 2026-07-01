@@ -83,16 +83,111 @@ def safe_conversations_return_url(raw_url: str | None) -> str:
     return "/admin/conversations"
 
 
+def safe_logs_return_url(raw_url: str | None) -> str:
+    raw_url = (raw_url or "").strip()
+    if raw_url.startswith("/admin/logs"):
+        return raw_url
+    return "/admin/logs"
+
+
+def page_param(request: Request, name: str) -> int:
+    try:
+        return max(1, int(request.query_params.get(name, "1") or "1"))
+    except ValueError:
+        return 1
+
+
+def page_meta(total: int, page: int, per_page: int) -> dict[str, int | None]:
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    return {
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "total_pages": total_pages,
+        "prev_page": page - 1 if page > 1 else None,
+        "next_page": page + 1 if page < total_pages else None,
+    }
+
+
 @router.get("", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_db), _: None = Depends(require_admin)):
+    per_page = 20
+    req_page = page_param(request, "req_page")
+    request_total = db.scalar(select(func.count()).select_from(RequestLog)) or 0
+    req_meta = page_meta(request_total, req_page, per_page)
     stats = {
         "models": db.scalar(select(func.count()).select_from(ModelConfig)) or 0,
         "credentials": db.scalar(select(func.count()).select_from(Credential)) or 0,
         "api_keys": db.scalar(select(func.count()).select_from(ApiKey)) or 0,
-        "requests": db.scalar(select(func.count()).select_from(RequestLog)) or 0,
+        "requests": request_total,
     }
-    recent = db.scalars(select(RequestLog).order_by(desc(RequestLog.created_at)).limit(20)).all()
-    return templates.TemplateResponse("index.html", {"request": request, "stats": stats, "recent": recent})
+    recent = db.scalars(
+        select(RequestLog)
+        .order_by(desc(RequestLog.created_at))
+        .offset((int(req_meta["page"]) - 1) * per_page)
+        .limit(per_page)
+    ).all()
+    log_settings = {
+        "enable_request_logs": get_setting(db, "enable_request_logs", "true"),
+    }
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "stats": stats,
+            "recent": recent,
+            "req_meta": req_meta,
+            "log_settings": log_settings,
+        },
+    )
+
+
+@router.post("/request-logs/settings")
+def save_index_request_log_settings(
+    request: Request,
+    enable_request_logs: str | None = Form(None),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    value = "true" if enable_request_logs == "on" else "false"
+    set_setting(db, "enable_request_logs", value)
+    db.commit()
+    audit(db, request, "request_log_settings_update", "request_logs", f"enable_request_logs={value}")
+    return RedirectResponse("/admin?updated=settings", status_code=303)
+
+
+@router.post("/request-logs/bulk-delete")
+async def bulk_delete_request_logs(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    form = await request.form()
+    ids: list[int] = []
+    for raw in form.getlist("log_ids"):
+        try:
+            ids.append(int(str(raw)))
+        except ValueError:
+            continue
+    ids = sorted(set(ids))
+    if ids:
+        deleted = db.query(RequestLog).filter(RequestLog.id.in_(ids)).delete(synchronize_session=False)
+        db.commit()
+        audit(db, request, "request_logs_bulk_delete", "request_logs", f"count={deleted}")
+    return RedirectResponse(str(form.get("return_url") or "/admin"), status_code=303)
+
+
+@router.post("/request-logs/clear")
+def clear_request_logs(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    deleted = db.query(RequestLog).delete(synchronize_session=False)
+    db.commit()
+    audit(db, request, "request_logs_clear", "request_logs", f"count={deleted}")
+    return RedirectResponse(f"/admin?updated=clear&request_count={deleted}", status_code=303)
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -151,6 +246,8 @@ def tools_page(request: Request, db: Session = Depends(get_db), _: None = Depend
         for key in [
             "tool_call_mode",
             "tool_client_profile",
+            "tokeny_tool_result_compaction",
+            "tokeny_compact_tool_schema_after_result",
             "document_output_strategy",
             "baidu_native_document_policy",
             "tool_buffer_timeout_ms",
@@ -176,6 +273,8 @@ def update_tools(
     request: Request,
     tool_call_mode: str = Form("auto"),
     tool_client_profile: str = Form("auto"),
+    tokeny_tool_result_compaction: str | None = Form(None),
+    tokeny_compact_tool_schema_after_result: str | None = Form(None),
     document_output_strategy: str = Form("auto"),
     baidu_native_document_policy: str = Form("explicit_only"),
     tool_buffer_timeout_ms: str = Form("60000"),
@@ -186,7 +285,7 @@ def update_tools(
     tool_force_final_after_result: str | None = Form(None),
     tool_repeat_protection_enabled: str | None = Form(None),
     tool_repeat_protection_scope: str = Form("delete_move"),
-    tool_repeat_match_mode: str = Form("exact"),
+    tool_repeat_match_mode: str = Form("smart"),
     tool_arg_safety_enabled: str | None = Form(None),
     tool_path_safety_enabled: str | None = Form(None),
     tool_mojibake_safety_enabled: str | None = Form(None),
@@ -206,8 +305,8 @@ def update_tools(
         tool_parse_failure_strategy = "clean_text"
     if tool_repeat_protection_scope not in {"off", "delete_move", "write", "all"}:
         tool_repeat_protection_scope = "delete_move"
-    if tool_repeat_match_mode not in {"none", "exact", "path"}:
-        tool_repeat_match_mode = "exact"
+    if tool_repeat_match_mode not in {"none", "smart", "exact", "path"}:
+        tool_repeat_match_mode = "smart"
     try:
         tool_buffer_timeout_ms = str(max(1000, int(tool_buffer_timeout_ms or "60000")))
     except ValueError:
@@ -223,6 +322,8 @@ def update_tools(
     updates = {
         "tool_call_mode": tool_call_mode,
         "tool_client_profile": tool_client_profile,
+        "tokeny_tool_result_compaction": "true" if tokeny_tool_result_compaction == "on" else "false",
+        "tokeny_compact_tool_schema_after_result": "true" if tokeny_compact_tool_schema_after_result == "on" else "false",
         "document_output_strategy": document_output_strategy,
         "baidu_native_document_policy": baidu_native_document_policy,
         "tool_buffer_timeout_ms": tool_buffer_timeout_ms,
@@ -795,6 +896,23 @@ def toggle_api_key(
     return RedirectResponse("/admin/api-keys", status_code=303)
 
 
+@router.post("/api-keys/{key_id}/delete")
+def delete_api_key(
+    request: Request,
+    key_id: int,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    item = db.get(ApiKey, key_id)
+    if item:
+        name = item.name
+        preview = item.key_preview
+        db.delete(item)
+        db.commit()
+        audit(db, request, "api_key_delete", name, f"id={key_id}, preview={preview}")
+    return RedirectResponse("/admin/api-keys?deleted=1", status_code=303)
+
+
 @router.post("/credentials/{credential_id}/toggle")
 def toggle_credential(
     request: Request,
@@ -912,49 +1030,78 @@ def save_prompt(
 @router.get("/logs", response_class=HTMLResponse)
 def logs_page(request: Request, db: Session = Depends(get_db), _: None = Depends(require_admin)):
     q = (request.query_params.get("q", "") or "").strip()
-    req_stmt = select(RequestLog).order_by(desc(RequestLog.created_at)).limit(200)
-    sys_stmt = select(SystemLog).order_by(desc(SystemLog.created_at)).limit(150)
-    audit_stmt = select(OperationAudit).order_by(desc(OperationAudit.created_at)).limit(100)
+    log_settings = {
+        key: get_setting(db, key)
+        for key in [
+            "enable_request_logs",
+            "enable_system_logs",
+            "log_request_body",
+            "log_upstream_body",
+            "log_upstream_model",
+            "mask_sensitive_logs",
+            "log_retention_days",
+        ]
+    }
+    per_page = 20
+    req_page = page_param(request, "req_page")
+    sys_page = page_param(request, "sys_page")
+    audit_page = page_param(request, "audit_page")
+    req_filters = []
+    sys_filters = []
+    audit_filters = []
     if q:
         like = f"%{q}%"
-        req_stmt = (
-            select(RequestLog)
-            .where(
-                or_(
-                    RequestLog.request_id.ilike(like),
-                    RequestLog.api_key_name.ilike(like),
-                    RequestLog.source_ip.ilike(like),
-                    RequestLog.endpoint.ilike(like),
-                    RequestLog.model.ilike(like),
-                    RequestLog.error.ilike(like),
-                )
+        req_filters.append(
+            or_(
+                RequestLog.request_id.ilike(like),
+                RequestLog.api_key_name.ilike(like),
+                RequestLog.source_ip.ilike(like),
+                RequestLog.endpoint.ilike(like),
+                RequestLog.model.ilike(like),
+                RequestLog.error.ilike(like),
             )
-            .order_by(desc(RequestLog.created_at))
-            .limit(200)
         )
-        sys_stmt = (
-            select(SystemLog)
-            .where(or_(SystemLog.level.ilike(like), SystemLog.module.ilike(like), SystemLog.message.ilike(like)))
-            .order_by(desc(SystemLog.created_at))
-            .limit(150)
+        sys_filters.append(
+            or_(SystemLog.level.ilike(like), SystemLog.module.ilike(like), SystemLog.message.ilike(like))
         )
-        audit_stmt = (
-            select(OperationAudit)
-            .where(
-                or_(
-                    OperationAudit.actor.ilike(like),
-                    OperationAudit.source_ip.ilike(like),
-                    OperationAudit.action.ilike(like),
-                    OperationAudit.target.ilike(like),
-                    OperationAudit.detail.ilike(like),
-                )
+        audit_filters.append(
+            or_(
+                OperationAudit.actor.ilike(like),
+                OperationAudit.source_ip.ilike(like),
+                OperationAudit.action.ilike(like),
+                OperationAudit.target.ilike(like),
+                OperationAudit.detail.ilike(like),
             )
-            .order_by(desc(OperationAudit.created_at))
-            .limit(100)
         )
-    req_logs = db.scalars(req_stmt).all()
-    sys_logs = db.scalars(sys_stmt).all()
-    audits = db.scalars(audit_stmt).all()
+
+    req_total_stmt = select(func.count()).select_from(RequestLog)
+    sys_total_stmt = select(func.count()).select_from(SystemLog)
+    audit_total_stmt = select(func.count()).select_from(OperationAudit)
+    req_stmt = select(RequestLog).order_by(desc(RequestLog.created_at))
+    sys_stmt = select(SystemLog).order_by(desc(SystemLog.created_at))
+    audit_stmt = select(OperationAudit).order_by(desc(OperationAudit.created_at))
+    if req_filters:
+        req_total_stmt = req_total_stmt.where(*req_filters)
+        req_stmt = req_stmt.where(*req_filters)
+    if sys_filters:
+        sys_total_stmt = sys_total_stmt.where(*sys_filters)
+        sys_stmt = sys_stmt.where(*sys_filters)
+    if audit_filters:
+        audit_total_stmt = audit_total_stmt.where(*audit_filters)
+        audit_stmt = audit_stmt.where(*audit_filters)
+
+    req_meta = page_meta(db.scalar(req_total_stmt) or 0, req_page, per_page)
+    sys_meta = page_meta(db.scalar(sys_total_stmt) or 0, sys_page, per_page)
+    audit_meta = page_meta(db.scalar(audit_total_stmt) or 0, audit_page, per_page)
+    req_logs = db.scalars(
+        req_stmt.offset((int(req_meta["page"]) - 1) * per_page).limit(per_page)
+    ).all()
+    sys_logs = db.scalars(
+        sys_stmt.offset((int(sys_meta["page"]) - 1) * per_page).limit(per_page)
+    ).all()
+    audits = db.scalars(
+        audit_stmt.offset((int(audit_meta["page"]) - 1) * per_page).limit(per_page)
+    ).all()
     stats = {
         "request_total": db.scalar(select(func.count()).select_from(RequestLog)) or 0,
         "request_failed": db.scalar(select(func.count()).select_from(RequestLog).where(RequestLog.status_code >= 400)) or 0,
@@ -963,8 +1110,52 @@ def logs_page(request: Request, db: Session = Depends(get_db), _: None = Depends
     }
     return templates.TemplateResponse(
         "logs.html",
-        {"request": request, "req_logs": req_logs, "sys_logs": sys_logs, "audits": audits, "q": q, "stats": stats},
+        {
+            "request": request,
+            "req_logs": req_logs,
+            "sys_logs": sys_logs,
+            "audits": audits,
+            "q": q,
+            "stats": stats,
+            "log_settings": log_settings,
+            "req_meta": req_meta,
+            "sys_meta": sys_meta,
+            "audit_meta": audit_meta,
+        },
     )
+
+
+@router.post("/logs/settings")
+def save_log_settings(
+    request: Request,
+    enable_request_logs: str | None = Form(None),
+    enable_system_logs: str | None = Form(None),
+    log_request_body: str | None = Form(None),
+    log_upstream_body: str | None = Form(None),
+    log_upstream_model: str | None = Form(None),
+    mask_sensitive_logs: str | None = Form(None),
+    log_retention_days: str = Form("30"),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    try:
+        retention_days = str(max(1, int(log_retention_days or "30")))
+    except ValueError:
+        retention_days = "30"
+    updates = {
+        "enable_request_logs": "true" if enable_request_logs == "on" else "false",
+        "enable_system_logs": "true" if enable_system_logs == "on" else "false",
+        "log_request_body": "true" if log_request_body == "on" else "false",
+        "log_upstream_body": "true" if log_upstream_body == "on" else "false",
+        "log_upstream_model": "true" if log_upstream_model == "on" else "false",
+        "mask_sensitive_logs": "true" if mask_sensitive_logs == "on" else "false",
+        "log_retention_days": retention_days,
+    }
+    for key, value in updates.items():
+        set_setting(db, key, value)
+    db.commit()
+    audit(db, request, "log_settings_update", "logs", json.dumps(updates, ensure_ascii=False))
+    return RedirectResponse("/admin/logs?updated=settings", status_code=303)
 
 
 @router.get("/logs/export")
@@ -1006,3 +1197,49 @@ def cleanup_logs(
     db.commit()
     audit(db, request, "logs_cleanup", "logs", f"retention_days={days}")
     return RedirectResponse("/admin/logs?updated=cleanup", status_code=303)
+
+
+@router.post("/logs/bulk-delete")
+async def bulk_delete_logs(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    form = await request.form()
+    log_type = str(form.get("log_type") or "").strip()
+    return_url = safe_logs_return_url(str(form.get("return_url") or ""))
+    ids: list[int] = []
+    for raw in form.getlist("log_ids"):
+        try:
+            ids.append(int(str(raw)))
+        except ValueError:
+            continue
+    ids = sorted(set(ids))
+    model_map = {
+        "request": RequestLog,
+        "system": SystemLog,
+        "audit": OperationAudit,
+    }
+    model = model_map.get(log_type)
+    if model and ids:
+        deleted = db.query(model).filter(model.id.in_(ids)).delete(synchronize_session=False)
+        db.commit()
+        if log_type != "audit":
+            audit(db, request, "logs_bulk_delete", f"{log_type}_logs", f"count={deleted}")
+    return RedirectResponse(return_url, status_code=303)
+
+
+@router.post("/logs/clear")
+def clear_all_logs(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    request_count = db.query(RequestLog).delete(synchronize_session=False)
+    system_count = db.query(SystemLog).delete(synchronize_session=False)
+    audit_count = db.query(OperationAudit).delete(synchronize_session=False)
+    db.commit()
+    return RedirectResponse(
+        f"/admin/logs?updated=clear&request_count={request_count}&system_count={system_count}&audit_count={audit_count}",
+        status_code=303,
+    )

@@ -216,9 +216,195 @@ def _recent_tool_result_context(
     return "\n\n".join(snippets)
 
 
-def tool_result_messages(messages: list[dict[str, Any]], force_final: bool = False, cache_key: str = "") -> list[dict[str, Any]]:
+def _short_tool_args(call: dict[str, Any]) -> str:
+    args = _tool_call_arguments(call)
+    if not args:
+        return "{}"
+    return json.dumps(args, ensure_ascii=False, sort_keys=True, separators=(",", ":"))[:500]
+
+
+def _recent_tool_call_summaries(messages: list[dict[str, Any]], limit: int = 8) -> list[str]:
+    summaries: list[str] = []
+    for item in reversed(messages):
+        if item.get("role") != "assistant" or not item.get("tool_calls"):
+            continue
+        for call in item.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            name = _tool_call_name(call) or "tool"
+            summaries.append(f"- {name} args={_short_tool_args(call)}")
+            if len(summaries) >= limit:
+                return list(reversed(summaries))
+    return list(reversed(summaries))
+
+
+def _latest_assistant_tool_call(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    assistant_call = next((item for item in reversed(messages[:-1]) if item.get("role") == "assistant" and item.get("tool_calls")), None)
+    calls = (assistant_call or {}).get("tool_calls") or []
+    return calls[-1] if calls and isinstance(calls[-1], dict) else None
+
+
+def _tool_names_for_prompt(tools: list[dict[str, Any]] | None) -> str:
+    names = sorted(_tool_function_names(tools))
+    return ", ".join(names[:30])
+
+
+def _schema_has_enum(schema: Any) -> bool:
+    if isinstance(schema, dict):
+        if "enum" in schema:
+            return True
+        return any(_schema_has_enum(value) for value in schema.values())
+    if isinstance(schema, list):
+        return any(_schema_has_enum(item) for item in schema)
+    return False
+
+
+def _compact_schema_for_prompt(schema: dict[str, Any]) -> dict[str, Any]:
+    properties = schema.get("properties") if isinstance(schema, dict) else {}
+    compact: dict[str, Any] = {}
+    if schema.get("required"):
+        compact["required"] = schema.get("required")
+    if isinstance(properties, dict):
+        compact_props: dict[str, Any] = {}
+        for key, prop in properties.items():
+            if not isinstance(prop, dict):
+                continue
+            item: dict[str, Any] = {}
+            for field in ("type", "enum", "items", "anyOf", "oneOf"):
+                if field in prop:
+                    item[field] = prop[field]
+            compact_props[key] = item or {"type": _schema_type(prop) or "string"}
+        if compact_props:
+            compact["properties"] = compact_props
+    return compact
+
+
+def _compact_enum_tool_schema_lines(tools: list[dict[str, Any]] | None) -> list[str]:
+    lines: list[str] = []
+    for tool in tools or []:
+        fn = tool.get("function") if tool.get("type") == "function" else tool
+        if not isinstance(fn, dict):
+            continue
+        name = str(fn.get("name") or "")
+        params = fn.get("parameters") or {}
+        if not name or not isinstance(params, dict):
+            continue
+        if "memory" not in name.lower() and not _schema_has_enum(params):
+            continue
+        compact = _compact_schema_for_prompt(params)
+        if compact:
+            lines.append(f"- {name}: parameters={json.dumps(compact, ensure_ascii=False, separators=(',', ':'))}")
+    return lines
+
+
+def _looks_like_file_write_task(text: str) -> bool:
+    lowered = text.lower()
+    markers = [
+        "保存",
+        "写入",
+        "创建文档",
+        "创建文件",
+        "生成文档",
+        "补齐",
+        "正文",
+        ".md",
+        "write",
+        "save",
+        "file",
+    ]
+    return any(marker in lowered or marker in text for marker in markers)
+
+
+def _compact_tool_result_messages(
+    messages: list[dict[str, Any]],
+    force_final: bool = False,
+    cache_key: str = "",
+    tools: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     if not has_recent_tool_result(messages):
         return messages
+    _store_tool_results_from_messages(messages, cache_key)
+    result = messages[-1]
+    previous_user = latest_user_message(messages[:-1])
+    latest_call = _latest_assistant_tool_call(messages)
+    latest_fingerprint = _latest_assistant_call_fingerprint(messages)
+    tool_name = result.get("name") or result.get("tool_call_id") or (latest_call and _tool_call_name(latest_call)) or "tool"
+    result_text = _message_content_text(result.get("content", ""))
+    prior_context = ""
+    if _looks_like_cached_tool_result(result_text):
+        prior_context = _recent_tool_result_context(messages, cache_key=cache_key, latest_fingerprint=latest_fingerprint, limit=2, max_chars=10000)
+
+    visible_result = result_text
+    if len(visible_result) > 12000:
+        visible_result = visible_result[:12000] + f"\n...[tool result clipped by proxy, original length={len(result_text)} chars]"
+
+    completed = _recent_tool_call_summaries(messages[:-1], limit=8)
+    user_text = _message_content_text(previous_user[0].get("content", "")) if previous_user else ""
+    available_tools = _tool_names_for_prompt(tools)
+    write_task = _looks_like_file_write_task(user_text)
+    latest_call_text = ""
+    if latest_call:
+        latest_call_text = f"{_tool_call_name(latest_call)} args={_short_tool_args(latest_call)}"
+
+    content = [
+        "Tokeny tool result update (compressed by proxy).",
+        "Treat the tool result as factual state. Do not restart planning from scratch.",
+    ]
+    if user_text:
+        content.append(f"Original user request:\n{user_text}")
+    if completed:
+        content.append("Completed tool calls in recent context:\n" + "\n".join(completed))
+    if latest_call_text:
+        content.append(f"Latest tool call:\n{latest_call_text}")
+    content.append(f"Latest tool result from {tool_name}:\n{visible_result}")
+    if prior_context:
+        content.append(
+            "The latest tool result is a client cache notice. Use this earlier real result instead of repeating the exact same read:\n"
+            + prior_context
+        )
+    if _looks_like_truncated_tool_result(result_text):
+        content.append(
+            "The result was truncated but still useful. Continue from the visible content. "
+            "Only read another startLine/endLine range if the hidden part is required."
+        )
+
+    next_rules = [
+        "Next-step rules:",
+        "- Do not repeat a successful list_files/read_file/glob/grep call with identical arguments.",
+        "- Reading different files or a different line range is allowed when it is genuinely required.",
+        "- If enough information is already available, continue the task instead of inspecting directories again.",
+    ]
+    if write_task and not force_final:
+        next_rules.extend(
+            [
+                "- This is a client workspace file/document task. If the target content and path are clear, your next response MUST call modify_file/write_file.",
+                "- Do not output the document body as normal prose when the user asked to save/create a local file.",
+                "- For long files, call modify_file once with operation=write for the first segment, then append different later segments in later turns.",
+            ]
+        )
+    if force_final:
+        next_rules.append("- Now provide the final natural-language answer based on the tool result; do not call another tool unless the user explicitly asks.")
+    if available_tools:
+        next_rules.append(f"Available tool names: {available_tools}. Use exact names and parameter names from prior schema.")
+    next_rules.append(
+        'If you call a tool, output only DSML: <|DSML| tool_calls><|DSML| invoke name="tool_name"><|DSML| parameter name="parameter_name">parameter_value</|DSML| parameter></|DSML| invoke></|DSML| tool_calls>'
+    )
+    content.append("\n".join(next_rules))
+    return [{"role": "user", "content": "\n\n".join(content)}]
+
+
+def tool_result_messages(
+    messages: list[dict[str, Any]],
+    force_final: bool = False,
+    cache_key: str = "",
+    profile: str = "auto",
+    compact_tokeny: bool = False,
+    tools: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    if not has_recent_tool_result(messages):
+        return messages
+    if profile == "tokeny" and compact_tokeny:
+        return _compact_tool_result_messages(messages, force_final=force_final, cache_key=cache_key, tools=tools)
     _store_tool_results_from_messages(messages, cache_key)
     result = messages[-1]
     previous_user = latest_user_message(messages[:-1])
@@ -286,17 +472,32 @@ def _tool_prompt(
     after_tool_result: bool = False,
     loop_protection: bool = True,
     route_instruction: str = "",
+    compact_after_tool: bool = False,
 ) -> str:
     if not tools or tool_choice == "none":
         return ""
-    lines = [
-        "Tool calling protocol: you may use the tools provided by the client.",
-        "When a tool is needed, do not explain in natural language and do not output the tool call as normal prose.",
-        "If you call a tool, the entire assistant response must contain only one tool-call structure, with no text before or after it.",
-        "Strictly output this DSML format; the server will convert it into standard OpenAI tool_calls for the client:",
-        '<|DSML| tool_calls><|DSML| invoke name="tool_name"><|DSML| parameter name="parameter_name">parameter_value</|DSML| parameter></|DSML| invoke></|DSML| tool_calls>',
-        "Available tools:",
-    ]
+    use_compact_schema = profile == "tokeny" and after_tool_result and compact_after_tool
+    if use_compact_schema:
+        lines = [
+            "Compact tool calling protocol: tools are still available.",
+            "When a tool is needed, output only one DSML tool-call structure and no prose.",
+            '<|DSML| tool_calls><|DSML| invoke name="tool_name"><|DSML| parameter name="parameter_name">parameter_value</|DSML| parameter></|DSML| invoke></|DSML| tool_calls>',
+            f"Available tool names: {_tool_names_for_prompt(tools)}.",
+            "Use the exact parameter names from earlier tool schemas and the latest tool result context.",
+        ]
+        enum_schema_lines = _compact_enum_tool_schema_lines(tools)
+        if enum_schema_lines:
+            lines.append("Critical compact schemas for enum/action tools:")
+            lines.extend(enum_schema_lines[:12])
+    else:
+        lines = [
+            "Tool calling protocol: you may use the tools provided by the client.",
+            "When a tool is needed, do not explain in natural language and do not output the tool call as normal prose.",
+            "If you call a tool, the entire assistant response must contain only one tool-call structure, with no text before or after it.",
+            "Strictly output this DSML format; the server will convert it into standard OpenAI tool_calls for the client:",
+            '<|DSML| tool_calls><|DSML| invoke name="tool_name"><|DSML| parameter name="parameter_name">parameter_value</|DSML| parameter></|DSML| invoke></|DSML| tool_calls>',
+            "Available tools:",
+        ]
     if profile == "tokeny":
         lines.extend(
             [
@@ -320,16 +521,17 @@ def _tool_prompt(
                 "Only call another tool if it is a different necessary next step; otherwise answer the user in natural language.",
             ]
         )
-    for tool in tools:
-        fn = tool.get("function") if tool.get("type") == "function" else tool
-        if not isinstance(fn, dict):
-            continue
-        name = fn.get("name")
-        if not name:
-            continue
-        desc = fn.get("description") or ""
-        params = fn.get("parameters") or {}
-        lines.append(f"- {name}: {desc}; parameters={json.dumps(params, ensure_ascii=False)}")
+    if not use_compact_schema:
+        for tool in tools:
+            fn = tool.get("function") if tool.get("type") == "function" else tool
+            if not isinstance(fn, dict):
+                continue
+            name = fn.get("name")
+            if not name:
+                continue
+            desc = fn.get("description") or ""
+            params = fn.get("parameters") or {}
+            lines.append(f"- {name}: {desc}; parameters={json.dumps(params, ensure_ascii=False)}")
     return "\n".join(lines)
 
 
@@ -341,8 +543,9 @@ def _append_tool_prompt(
     after_tool_result: bool = False,
     loop_protection: bool = True,
     route_instruction: str = "",
+    compact_after_tool: bool = False,
 ) -> str:
-    prompt = _tool_prompt(tools, tool_choice, profile, after_tool_result, loop_protection, route_instruction)
+    prompt = _tool_prompt(tools, tool_choice, profile, after_tool_result, loop_protection, route_instruction, compact_after_tool)
     if not prompt:
         return query
     return f"{query}\n\n{prompt}".strip()
@@ -396,9 +599,97 @@ def _tool_path_value(arguments: dict[str, Any]) -> str:
     return "->".join(values)
 
 
+def _stable_tool_value(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _tool_content_hash(value: Any) -> str:
+    text = _stable_tool_value(value)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16] if text else ""
+
+
+def _path_list_value(arguments: dict[str, Any]) -> str:
+    paths: list[str] = []
+    file_paths = arguments.get("filePaths")
+    if isinstance(file_paths, list):
+        paths.extend(str(item).strip() for item in file_paths if str(item).strip())
+    for key in ("filePath", "path", "source", "destination", "target", "from", "to", "src", "dst"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            paths.append(value.strip())
+    return "|".join(sorted(paths))
+
+
+def _tool_smart_repeat_signature(call: dict[str, Any]) -> str:
+    name = _tool_call_name(call).strip()
+    if not name:
+        return ""
+    normalized_name = name.lower()
+    args = _tool_call_arguments(call)
+
+    if normalized_name in {"read_file", "read_text", "read"}:
+        parts = [
+            name,
+            _stable_tool_value(args.get("filePath") or args.get("path")),
+            _stable_tool_value(args.get("startLine")),
+            _stable_tool_value(args.get("endLine")),
+            _stable_tool_value(args.get("offset")),
+            _stable_tool_value(args.get("limit")),
+        ]
+        return "smart:read:" + ":".join(parts)
+
+    if normalized_name in {"list_files", "ls", "glob", "grep", "search"}:
+        important = {
+            key: args.get(key)
+            for key in (
+                "path",
+                "directory",
+                "pattern",
+                "fileGlob",
+                "recursive",
+                "all",
+                "long",
+                "contextLines",
+                "maxResults",
+                "excludePatterns",
+            )
+            if key in args
+        }
+        return f"smart:{name}:{json.dumps(important, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
+
+    if normalized_name in {"modify_file", "write_file", "create_file", "edit_file"}:
+        parts = [
+            name,
+            _stable_tool_value(args.get("filePath") or args.get("path")),
+            _stable_tool_value(args.get("operation") or "write"),
+            _stable_tool_value(args.get("startLine")),
+            _stable_tool_value(args.get("endLine")),
+            _stable_tool_value(args.get("afterLine")),
+            _tool_content_hash(args.get("content")),
+            _tool_content_hash(args.get("searchText")),
+        ]
+        return "smart:write:" + ":".join(parts)
+
+    if normalized_name in {"delete_file", "remove_file", "move_file", "rename_file", "copy_file"}:
+        parts = [
+            name,
+            _path_list_value(args),
+            _stable_tool_value(args.get("operation")),
+        ]
+        return "smart:fileop:" + ":".join(parts)
+
+    return "smart:" + _tool_call_fingerprint(call)
+
+
 def _tool_repeat_signature(call: dict[str, Any], match_mode: str = "exact") -> str:
     if match_mode == "none":
         return ""
+    if match_mode == "smart":
+        return _tool_smart_repeat_signature(call)
     if match_mode == "path":
         name = _tool_call_name(call)
         path_value = _tool_path_value(_tool_call_arguments(call))
@@ -428,8 +719,8 @@ def _tool_repeat_protection_enabled(db: Session) -> bool:
 
 
 def _tool_repeat_match_mode(db: Session) -> str:
-    mode = get_setting(db, "tool_repeat_match_mode", "exact").lower()
-    return mode if mode in {"none", "exact", "path"} else "exact"
+    mode = get_setting(db, "tool_repeat_match_mode", "smart").lower()
+    return mode if mode in {"none", "smart", "exact", "path"} else "smart"
 
 
 def _tool_repeat_scope(db: Session) -> str:
@@ -778,6 +1069,12 @@ def _normalize_tool_markup(text: str) -> str:
     normalized = re.sub(r"</\s*DSML\s+", "</|DSML| ", normalized, flags=re.I)
     normalized = normalized.replace("<| DSML |", "<|DSML|")
     normalized = normalized.replace("<|DSML ", "<|DSML| ")
+    normalized = re.sub(
+        r"<\s*/\s*\|?\s*DSML\s*\|?\s*parameter\s+name=([\"'][^\"']+[\"'])\s*>",
+        r"</|DSML| parameter><|DSML| parameter name=\1>",
+        normalized,
+        flags=re.I,
+    )
     has_invoke_open = bool(re.search(r"<\s*\|?\s*DSML\s*\|?\s*invoke\b", normalized, flags=re.I))
     has_invoke_close = bool(re.search(r"<\s*/\s*\|?\s*DSML\s*\|?\s*invoke\s*>", normalized, flags=re.I))
     if has_invoke_open and not has_invoke_close:
@@ -860,6 +1157,14 @@ def _tool_client_profile(db: Session) -> str:
     profile = get_setting(db, "tool_client_profile", "auto").lower()
     allowed = {"auto", "openai", "cherry", "cline", "chatbox", "openwebui", "lobe", "hermes", "tokeny"}
     return profile if profile in allowed else "auto"
+
+
+def _tokeny_tool_result_compaction(db: Session) -> bool:
+    return get_setting(db, "tokeny_tool_result_compaction", "true").lower() == "true"
+
+
+def _tokeny_compact_tool_schema_after_result(db: Session) -> bool:
+    return get_setting(db, "tokeny_compact_tool_schema_after_result", "true").lower() == "true"
 
 
 def _document_output_strategy(db: Session) -> str:
@@ -1104,10 +1409,18 @@ def _build_query_for_request(
     messages: list[dict[str, Any]],
     binding: ConversationBinding | None,
     cache_key: str = "",
+    tools: list[dict[str, Any]] | None = None,
 ) -> str:
     if has_recent_tool_result(messages):
         return adapter.build_query(
-            tool_result_messages(messages, force_final=_force_final_after_tool_result(db), cache_key=cache_key),
+            tool_result_messages(
+                messages,
+                force_final=_force_final_after_tool_result(db),
+                cache_key=cache_key,
+                profile=_tool_client_profile(db),
+                compact_tokeny=_tokeny_tool_result_compaction(db),
+                tools=tools,
+            ),
             force_prompt=False,
         )
     if not binding:
@@ -1317,6 +1630,30 @@ def _prepare_conversation(
         )
         db.add(conversation)
     else:
+        previous_model = conversation.model or conversation.requested_model or conversation.baidu_model
+        model_changed = (
+            (conversation.model and conversation.model != canonical_model)
+            or (conversation.requested_model and conversation.requested_model != requested_model)
+            or (conversation.baidu_model and conversation.baidu_model != baidu_model)
+        )
+        reset_on_model_change = get_setting(db, "conversation_reset_on_model_change", "true").lower() == "true"
+        if model_changed and reset_on_model_change:
+            old_session = conversation.baidu_session_id
+            conversation.baidu_session_id = ""
+            conversation.last_qid = ""
+            conversation.last_pkg_id = ""
+            conversation.cookie_snapshot = ""
+            conversation.rank = 0
+            conversation.status = "active"
+            conversation.last_error = ""
+            system_log(
+                db,
+                "INFO",
+                "conversation_binding",
+                "model changed; reset bound Baidu window "
+                f"local={local_id[:120]} previous_model={previous_model} "
+                f"new_model={canonical_model}/{baidu_model} previous_session={old_session or '-'}",
+            )
         conversation.model = canonical_model
         conversation.requested_model = requested_model
         conversation.baidu_model = baidu_model
@@ -1511,7 +1848,7 @@ async def chat_completions(
         system_log(db, "ERROR", "conversation_binding", f"prepare failed model={body.model} ip={source_ip}: {str(exc)[:500]}")
         raise
     tool_cache_key = _tool_cache_key_for_request(body, request, api_key, db, binding)
-    query = _build_query_for_request(adapter, db, messages, binding, cache_key=tool_cache_key)
+    query = _build_query_for_request(adapter, db, messages, binding, cache_key=tool_cache_key, tools=body.tools)
     _update_turn_prompt_preview(db, binding, query)
     tool_mode = _tool_mode(db)
     allow_tool_calls = not (
@@ -1527,6 +1864,7 @@ async def chat_completions(
             has_recent_tool_result(messages),
             _tool_loop_protection(db),
             _output_route_instruction(db, query, body.tools),
+            _tokeny_compact_tool_schema_after_result(db),
         )
     query = _fit_query_for_baidu(db, query, "", "/v1/chat/completions", binding)
     _update_turn_prompt_preview(db, binding, query)
@@ -1875,7 +2213,7 @@ async def responses(
             system_log(db, "ERROR", "conversation_binding", f"responses prepare failed model={body.model} ip={source_ip}: {str(exc)[:500]}")
             raise
         tool_cache_key = _tool_cache_key_for_request(body, request, api_key, db, binding)
-        query = _build_query_for_request(adapter, db, messages_dict, binding, cache_key=tool_cache_key)
+        query = _build_query_for_request(adapter, db, messages_dict, binding, cache_key=tool_cache_key, tools=body.tools)
         _update_turn_prompt_preview(db, binding, query)
         tool_mode = _tool_mode(db)
         allow_tool_calls = not (
@@ -1891,6 +2229,7 @@ async def responses(
                 has_recent_tool_result(messages_dict),
                 _tool_loop_protection(db),
                 _output_route_instruction(db, query, body.tools),
+                _tokeny_compact_tool_schema_after_result(db),
             )
         query = _fit_query_for_baidu(db, query, "", "/v1/responses", binding)
         _update_turn_prompt_preview(db, binding, query)

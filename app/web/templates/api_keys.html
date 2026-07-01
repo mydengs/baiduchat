@@ -16,6 +16,10 @@
 </section>
 {% endif %}
 
+{% if request.query_params.get("deleted") == "1" %}
+<section class="notice success-notice">API Key 已删除。</section>
+{% endif %}
+
 <section class="panel">
   <div class="panel-head">
     <div>
@@ -70,6 +74,9 @@
                 <button class="{{ 'danger-action' if item.enabled else 'secondary-action' }}">
                   {{ "停用" if item.enabled else "启用" }}
                 </button>
+              </form>
+              <form method="post" action="/admin/api-keys/{{ item.id }}/delete" onsubmit="return confirm('确定删除 API Key「{{ item.name }}」吗？删除后使用该 Key 的客户端会立即无法访问。')">
+                <button class="danger-action">删除</button>
               </form>
             </div>
           </td>

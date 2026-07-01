@@ -33,6 +33,14 @@
       </select>
       <small>后续可继续针对具体客户端微调工具格式和兜底策略。</small>
     </label>
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="tokeny_tool_result_compaction" {% if values.tokeny_tool_result_compaction == "true" %}checked{% endif %}>
+      Tokeny 工具结果压缩/纠偏：工具执行后把最近工具结果整理成“已知事实、已完成工具、下一步规则”，减少百度反复 list/read 的循环。仅客户端适配为 tokeny 时生效。
+    </label>
+    <label class="checkbox-line span-2">
+      <input type="checkbox" name="tokeny_compact_tool_schema_after_result" {% if values.tokeny_compact_tool_schema_after_result == "true" %}checked{% endif %}>
+      Tokeny 工具结果后简化工具协议：工具结果返回后的下一轮只注入简化 DSML 协议和工具名列表，不再重复完整 tools schema。首次请求仍保留完整 schema，避免模型不知道参数格式。
+    </label>
     <label>文档/文件输出路由
       <select name="document_output_strategy">
         <option value="auto" {% if values.document_output_strategy == "auto" %}selected{% endif %}>自动判断：明确本地路径/保存文件时优先客户端工具，其它场景不强制</option>
@@ -86,7 +94,7 @@
     </div>
     <label class="checkbox-line span-2">
       <input type="checkbox" name="tool_repeat_protection_enabled" {% if values.tool_repeat_protection_enabled == "true" %}checked{% endif %}>
-      启用重复工具调用保护：触发后会中断本轮重复工具调用，并返回纠正提示。Tokeny、Cline 等 Agent 客户端建议默认关闭，避免误伤批量文件操作。
+      启用重复工具调用保护：触发后会中断本轮被判定为“无推进重复”的工具调用，并返回纠正提示。Tokeny、Cline 等 Agent 客户端建议先保持关闭，确认规则适合当前工作流后再开启。
     </label>
     <label>重复保护范围
       <select name="tool_repeat_protection_scope">
@@ -100,10 +108,11 @@
     <label>重复判定方式
       <select name="tool_repeat_match_mode">
         <option value="none" {% if values.tool_repeat_match_mode == "none" %}selected{% endif %}>不判定：等同关闭重复保护</option>
+        <option value="smart" {% if values.tool_repeat_match_mode == "smart" %}selected{% endif %}>智能推进判断：允许分段读取/写入、读取多个文件、批量处理不同目标</option>
         <option value="exact" {% if values.tool_repeat_match_mode == "exact" %}selected{% endif %}>完全相同参数：工具名和参数 JSON 完全一致才算重复</option>
         <option value="path" {% if values.tool_repeat_match_mode == "path" %}selected{% endif %}>只看文件路径：同一工具操作同一路径即算重复，谨慎使用</option>
       </select>
-      <small>长文分批写入建议使用“完全相同参数”或直接关闭。</small>
+      <small>推荐“智能推进判断”。它会把 read_file 的 startLine/endLine、modify_file 的 operation/content、delete/move 的目标集合纳入判断，避免误伤读取多个文件、分段读取、分段 append、批量移动或批量删除。</small>
     </label>
     <label class="checkbox-line span-2">
       <input type="checkbox" name="tool_arg_safety_enabled" {% if values.tool_arg_safety_enabled == "true" %}checked{% endif %}>
