@@ -856,10 +856,13 @@ def save_credential(
 @public_router.get("/key-lookup", response_class=HTMLResponse)
 @router.get("/key-lookup", response_class=HTMLResponse)
 def key_lookup_page(request: Request):
+    is_admin_path = request.url.path.startswith("/admin/")
     return templates.TemplateResponse(
         "key_lookup.html",
         {
             "request": request,
+            "layout_template": "base.html" if is_admin_path else "public_base.html",
+            "action_url": "/admin/key-lookup" if is_admin_path else "/key-lookup",
             "raw_key": "",
             "item": None,
             "logs": [],
@@ -877,6 +880,7 @@ def key_lookup_page(request: Request):
 @public_router.post("/key-lookup", response_class=HTMLResponse)
 @router.post("/key-lookup", response_class=HTMLResponse)
 async def key_lookup_search(request: Request, db: Session = Depends(get_db)):
+    is_admin_path = request.url.path.startswith("/admin/")
     form = await request.form()
     raw_key = str(form.get("key_value") or "").strip()
     start_date = str(form.get("start_date") or "").strip()
@@ -888,6 +892,8 @@ async def key_lookup_search(request: Request, db: Session = Depends(get_db)):
 
     context = {
         "request": request,
+        "layout_template": "base.html" if is_admin_path else "public_base.html",
+        "action_url": "/admin/key-lookup" if is_admin_path else "/key-lookup",
         "raw_key": raw_key,
         "item": None,
         "logs": [],
