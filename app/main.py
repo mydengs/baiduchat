@@ -6,6 +6,7 @@ from app.api.openai import router as openai_router
 from app.core.config import get_settings
 from app.db.init_db import init_db
 from app.services.logging_service import setup_logging
+from app.web.admin import public_router as public_web_router
 from app.web.admin import router as admin_router
 
 
@@ -15,6 +16,7 @@ def create_app() -> FastAPI:
     init_db()
     app = FastAPI(title=settings.app_name)
     app.include_router(openai_router, prefix="/v1", tags=["openai"])
+    app.include_router(public_web_router, tags=["public"])
     app.include_router(admin_router, prefix="/admin", tags=["admin"])
     static_dir = Path(__file__).resolve().parent / "web" / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")

@@ -3,7 +3,7 @@
 {% macro lookup_pager(meta, raw_key, start_date, end_date) -%}
   <div class="pagination">
     {% if meta.prev_page %}
-      <form method="post" action="/admin/key-lookup">
+      <form method="post" action="/key-lookup">
         <input type="hidden" name="key_value" value="{{ raw_key }}">
         <input type="hidden" name="start_date" value="{{ start_date }}">
         <input type="hidden" name="end_date" value="{{ end_date }}">
@@ -15,7 +15,7 @@
     {% endif %}
     <span>第 {{ meta.page }} / {{ meta.total_pages }} 页，共 {{ meta.total }} 条</span>
     {% if meta.next_page %}
-      <form method="post" action="/admin/key-lookup">
+      <form method="post" action="/key-lookup">
         <input type="hidden" name="key_value" value="{{ raw_key }}">
         <input type="hidden" name="start_date" value="{{ start_date }}">
         <input type="hidden" name="end_date" value="{{ end_date }}">
@@ -44,7 +44,7 @@
       <p>日期筛选按请求日志时间过滤；不填写日期时默认显示该 Key 最新 20 条请求记录。</p>
     </div>
   </div>
-  <form method="post" action="/admin/key-lookup" class="form-grid">
+  <form method="post" action="/key-lookup" class="form-grid">
     <label class="span-2">API Key
       <input name="key_value" value="{{ raw_key }}" placeholder="sk-baidu-..." autocomplete="off" required>
     </label>
@@ -58,7 +58,7 @@
     <div class="span-2">
       <button class="primary-action">查询</button>
       {% if raw_key %}
-        <a class="secondary-link" href="/admin/key-lookup">清除</a>
+        <a class="secondary-link" href="/key-lookup">清除</a>
       {% endif %}
     </div>
   </form>

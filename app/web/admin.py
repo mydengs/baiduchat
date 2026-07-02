@@ -28,6 +28,7 @@ from app.db.models import (
 from app.db.session import get_db
 
 router = APIRouter()
+public_router = APIRouter()
 templates = Jinja2Templates(directory="app/web/templates")
 
 
@@ -852,6 +853,7 @@ def save_credential(
     return RedirectResponse("/admin/credentials", status_code=303)
 
 
+@public_router.get("/key-lookup", response_class=HTMLResponse)
 @router.get("/key-lookup", response_class=HTMLResponse)
 def key_lookup_page(request: Request):
     return templates.TemplateResponse(
@@ -872,6 +874,7 @@ def key_lookup_page(request: Request):
     )
 
 
+@public_router.post("/key-lookup", response_class=HTMLResponse)
 @router.post("/key-lookup", response_class=HTMLResponse)
 async def key_lookup_search(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
