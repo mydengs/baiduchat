@@ -1352,7 +1352,7 @@ def _empty_response_retry_enabled(db: Session) -> bool:
 
 
 def _empty_response_message() -> str:
-    return "上游百度会话本轮返回空内容，项目已尝试重置百度窗口并重试。请稍后重试，或在后台清空该会话绑定后继续。"
+    return "本轮返回空内容，项目已尝试重置窗口并重试。请稍后重试，或在清空该会话后继续。"
 
 
 def _reset_binding_for_empty_retry(db: Session, binding: ConversationBinding | None, trace_id: str, endpoint: str) -> bool:
@@ -2312,6 +2312,11 @@ async def _stream_responses(
     conversation_lock: asyncio.Lock | None = None,
 ) -> AsyncIterator[str]:
     response_id = "resp-" + uuid.uuid4().hex
+    message_item_id = "msg-" + uuid.uuid4().hex
+    text_output_index = 0
+    text_content_index = 0
+    text_output_started = False
+    text_output_sent = ""
     db = SessionLocal()
     adapter = BaiduAdapter(db)
     output_reasoning = get_setting(db, "output_reasoning", "true").lower() == "true"
@@ -2321,8 +2326,129 @@ async def _stream_responses(
     failure_strategy = _tool_failure_strategy(db)
     yield sse_event(
         "response.created",
-        {"type": "response.created", "response": {"id": response_id, "status": "in_progress", "model": model}},
+        {
+            "type": "response.created",
+            "response": {
+                "id": response_id,
+                "object": "response",
+                "created_at": now_ts(),
+                "status": "in_progress",
+                "model": model,
+                "output": [],
+            },
+        },
     )
+    yield sse_event(
+        "response.in_progress",
+        {
+            "type": "response.in_progress",
+            "response": {
+                "id": response_id,
+                "object": "response",
+                "created_at": now_ts(),
+                "status": "in_progress",
+                "model": model,
+                "output": [],
+            },
+        },
+    )
+
+    def response_text_events(delta: str) -> list[str]:
+        nonlocal text_output_started, text_output_sent
+        if not delta:
+            return []
+        events: list[str] = []
+        if not text_output_started:
+            text_output_started = True
+            events.append(
+                sse_event(
+                    "response.output_item.added",
+                    {
+                        "type": "response.output_item.added",
+                        "response_id": response_id,
+                        "output_index": text_output_index,
+                        "item": {
+                            "id": message_item_id,
+                            "type": "message",
+                            "status": "in_progress",
+                            "role": "assistant",
+                            "content": [],
+                        },
+                    },
+                )
+            )
+            events.append(
+                sse_event(
+                    "response.content_part.added",
+                    {
+                        "type": "response.content_part.added",
+                        "response_id": response_id,
+                        "item_id": message_item_id,
+                        "output_index": text_output_index,
+                        "content_index": text_content_index,
+                        "part": {"type": "output_text", "text": ""},
+                    },
+                )
+            )
+        text_output_sent += delta
+        events.append(
+            sse_event(
+                "response.output_text.delta",
+                {
+                    "type": "response.output_text.delta",
+                    "response_id": response_id,
+                    "item_id": message_item_id,
+                    "output_index": text_output_index,
+                    "content_index": text_content_index,
+                    "delta": delta,
+                },
+            )
+        )
+        return events
+
+    def response_text_done_events() -> list[str]:
+        if not text_output_started:
+            return []
+        return [
+            sse_event(
+                "response.output_text.done",
+                {
+                    "type": "response.output_text.done",
+                    "response_id": response_id,
+                    "item_id": message_item_id,
+                    "output_index": text_output_index,
+                    "content_index": text_content_index,
+                    "text": text_output_sent,
+                },
+            ),
+            sse_event(
+                "response.content_part.done",
+                {
+                    "type": "response.content_part.done",
+                    "response_id": response_id,
+                    "item_id": message_item_id,
+                    "output_index": text_output_index,
+                    "content_index": text_content_index,
+                    "part": {"type": "output_text", "text": text_output_sent},
+                },
+            ),
+            sse_event(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "response_id": response_id,
+                    "output_index": text_output_index,
+                    "item": {
+                        "id": message_item_id,
+                        "type": "message",
+                        "status": "completed",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": text_output_sent}],
+                    },
+                },
+            ),
+        ]
+
     content_preview = ""
     tool_buffer_mode = force_buffer_all or bool(tools and _should_parse_tools(db, allow_tool_calls) and _tool_mode(db) == "force_buffer")
     emitted_tool_calls: list[dict[str, Any]] = []
@@ -2361,17 +2487,13 @@ async def _stream_responses(
                                 if len(content_preview) <= max_buffer_chars:
                                     continue
                                 clean_content = _fallback_tool_text(content_preview, failure_strategy)
-                                yield sse_event(
-                                    "response.output_text.delta",
-                                    {"type": "response.output_text.delta", "delta": clean_content, "response_id": response_id},
-                                )
+                                for response_event in response_text_events(clean_content):
+                                    yield response_event
                                 tool_buffer_mode = False
                                 tool_buffer_failed = True
                                 continue
-                            yield sse_event(
-                                "response.output_text.delta",
-                                {"type": "response.output_text.delta", "delta": text, "response_id": response_id},
-                            )
+                            for response_event in response_text_events(text):
+                                yield response_event
                     if content_preview:
                         break
                     if attempt == 0 and _reset_binding_for_empty_retry(db, binding, state["request_id"], "/v1/responses stream"):
@@ -2380,10 +2502,8 @@ async def _stream_responses(
                 if not content_preview:
                     content_preview = _empty_response_message()
                     state["completion_chars"] = len(content_preview)
-                    yield sse_event(
-                        "response.output_text.delta",
-                        {"type": "response.output_text.delta", "delta": content_preview, "response_id": response_id},
-                    )
+                    for response_event in response_text_events(content_preview):
+                        yield response_event
                 _finish_conversation_turn(db, binding, "completed", started_at)
                 emitted_tool_calls = _parse_tool_calls_with_retries(content_preview, tools, db) if _should_parse_tools(db, allow_tool_calls) and not tool_buffer_failed else []
                 blocked_repeats: list[str] = []
@@ -2399,50 +2519,68 @@ async def _stream_responses(
                     summary = _tool_call_summary(emitted_tool_calls)
                     _log_tool_event(db, "INFO", f"stream responses parsed {len(emitted_tool_calls)} tool call(s) for model={model}: {summary}", state["request_id"])
                     _note_conversation_turn(db, binding, f"parsed tool_calls: {summary}")
-                    for call in emitted_tool_calls:
+                    for index, call in enumerate(emitted_tool_calls, start=1 if text_output_started else 0):
+                        item = {
+                            "id": call["id"],
+                            "type": "function_call",
+                            "status": "completed",
+                            "call_id": call["id"],
+                            "name": call["function"]["name"],
+                            "arguments": call["function"]["arguments"],
+                        }
                         yield sse_event(
                             "response.output_item.added",
                             {
                                 "type": "response.output_item.added",
                                 "response_id": response_id,
-                                "item": {
-                                    "id": call["id"],
-                                    "type": "function_call",
-                                    "call_id": call["id"],
-                                    "name": call["function"]["name"],
-                                    "arguments": call["function"]["arguments"],
-                                },
+                                "output_index": index,
+                                "item": item,
+                            },
+                        )
+                        yield sse_event(
+                            "response.output_item.done",
+                            {
+                                "type": "response.output_item.done",
+                                "response_id": response_id,
+                                "output_index": index,
+                                "item": item,
                             },
                         )
                 elif blocked_repeats:
-                    yield sse_event(
-                        "response.output_text.delta",
-                        {"type": "response.output_text.delta", "delta": _repeated_tool_block_text(blocked_repeats), "response_id": response_id},
-                    )
+                    for response_event in response_text_events(_repeated_tool_block_text(blocked_repeats)):
+                        yield response_event
                 elif tool_buffer_mode and content_preview:
                     if _maybe_tool_call_markup(content_preview):
                         _log_tool_event(db, "WARNING", f"stream responses fallback after unparsed tool-like output for model={model}; raw={content_preview[:500]}", state["request_id"])
                         _note_conversation_turn(db, binding, f"unparsed tool-like output: {content_preview[:800]}")
                     clean_content = _fallback_tool_text(content_preview, failure_strategy) if _has_tool_call_markup(content_preview) or _maybe_tool_call_markup(content_preview) else content_preview
-                    yield sse_event(
-                        "response.output_text.delta",
-                        {"type": "response.output_text.delta", "delta": clean_content, "response_id": response_id},
-                    )
+                    for response_event in response_text_events(clean_content):
+                        yield response_event
             except Exception as exc:
                 state["status_code"] = 500
                 state["error"] = str(exc)[:1000]
                 _finish_conversation_turn(db, binding, "failed", started_at, str(exc)[:1000])
                 traced_system_log(db, "ERROR", "conversation_binding", state["request_id"], f"responses stream upstream failed local={binding.local_conversation_id if binding else '-'} model={model}: {str(exc)[:500]}")
-                yield sse_event(
-                    "response.output_text.delta",
-                    {"type": "response.output_text.delta", "delta": _format_stream_error(exc), "response_id": response_id},
-                )
+                for response_event in response_text_events(_format_stream_error(exc)):
+                    yield response_event
     finally:
         final_status = "requires_action" if emitted_tool_calls else "completed"
         _release_conversation_lock(conversation_lock)
+        for response_event in response_text_done_events():
+            yield response_event
         yield sse_event(
             "response.completed",
-            {"type": "response.completed", "response": {"id": response_id, "status": final_status, "model": model}},
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "created_at": now_ts(),
+                    "status": final_status,
+                    "model": model,
+                    "output": [],
+                },
+            },
         )
         yield "data: [DONE]\n\n"
         db.close()
