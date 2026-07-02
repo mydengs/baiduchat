@@ -47,6 +47,23 @@ def parse_optional_datetime(value: str | None) -> datetime | None:
         return None
 
 
+def parse_optional_date_start(value: str | None) -> datetime | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def parse_optional_date_end(value: str | None) -> datetime | None:
+    start = parse_optional_date_start(value)
+    if not start:
+        return None
+    return start + timedelta(days=1)
+
+
 def api_key_preview(raw: str) -> str:
     return raw[:12] + "..." if len(raw) > 12 else raw
 
@@ -833,6 +850,96 @@ def save_credential(
     db.commit()
     audit(db, request, "credential_save", name)
     return RedirectResponse("/admin/credentials", status_code=303)
+
+
+@router.get("/key-lookup", response_class=HTMLResponse)
+def key_lookup_page(request: Request):
+    return templates.TemplateResponse(
+        "key_lookup.html",
+        {
+            "request": request,
+            "raw_key": "",
+            "item": None,
+            "logs": [],
+            "meta": None,
+            "total_requests": 0,
+            "today_requests": 0,
+            "start_date": "",
+            "end_date": "",
+            "error": "",
+            "now": datetime.utcnow(),
+        },
+    )
+
+
+@router.post("/key-lookup", response_class=HTMLResponse)
+async def key_lookup_search(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    raw_key = str(form.get("key_value") or "").strip()
+    start_date = str(form.get("start_date") or "").strip()
+    end_date = str(form.get("end_date") or "").strip()
+    try:
+        page = max(1, int(str(form.get("page") or "1")))
+    except ValueError:
+        page = 1
+
+    context = {
+        "request": request,
+        "raw_key": raw_key,
+        "item": None,
+        "logs": [],
+        "meta": None,
+        "total_requests": 0,
+        "today_requests": 0,
+        "start_date": start_date,
+        "end_date": end_date,
+        "error": "",
+        "now": datetime.utcnow(),
+    }
+    if not raw_key:
+        context["error"] = "请输入 API Key。"
+        return templates.TemplateResponse("key_lookup.html", context)
+
+    item = db.scalar(select(ApiKey).where(ApiKey.key_hash == sha256_token(raw_key)))
+    if not item:
+        context["error"] = "没有找到这个 API Key，或 Key 输入不正确。"
+        return templates.TemplateResponse("key_lookup.html", context)
+
+    filters = [RequestLog.api_key_name == item.name]
+    start_dt = parse_optional_date_start(start_date)
+    end_dt = parse_optional_date_end(end_date)
+    if start_dt:
+        filters.append(RequestLog.created_at >= start_dt)
+    if end_dt:
+        filters.append(RequestLog.created_at < end_dt)
+
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    filtered_total = db.scalar(select(func.count()).select_from(RequestLog).where(*filters)) or 0
+    today_requests = db.scalar(
+        select(func.count())
+        .select_from(RequestLog)
+        .where(RequestLog.api_key_name == item.name, RequestLog.created_at >= today_start)
+    ) or 0
+    per_page = 20
+    meta = page_meta(filtered_total, page, per_page)
+    logs = db.scalars(
+        select(RequestLog)
+        .where(*filters)
+        .order_by(desc(RequestLog.created_at))
+        .offset((int(meta["page"]) - 1) * per_page)
+        .limit(per_page)
+    ).all()
+
+    context.update(
+        {
+            "item": item,
+            "logs": logs,
+            "meta": meta,
+            "total_requests": item.use_count_total or 0,
+            "today_requests": today_requests,
+        }
+    )
+    return templates.TemplateResponse("key_lookup.html", context)
 
 
 @router.get("/api-keys", response_class=HTMLResponse)

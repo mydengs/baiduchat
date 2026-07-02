@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+
+{% macro lookup_pager(meta, raw_key, start_date, end_date) -%}
+  <div class="pagination">
+    {% if meta.prev_page %}
+      <form method="post" action="/admin/key-lookup">
+        <input type="hidden" name="key_value" value="{{ raw_key }}">
+        <input type="hidden" name="start_date" value="{{ start_date }}">
+        <input type="hidden" name="end_date" value="{{ end_date }}">
+        <input type="hidden" name="page" value="{{ meta.prev_page }}">
+        <button class="secondary-action">上一页</button>
+      </form>
+    {% else %}
+      <span class="secondary-link disabled">上一页</span>
+    {% endif %}
+    <span>第 {{ meta.page }} / {{ meta.total_pages }} 页，共 {{ meta.total }} 条</span>
+    {% if meta.next_page %}
+      <form method="post" action="/admin/key-lookup">
+        <input type="hidden" name="key_value" value="{{ raw_key }}">
+        <input type="hidden" name="start_date" value="{{ start_date }}">
+        <input type="hidden" name="end_date" value="{{ end_date }}">
+        <input type="hidden" name="page" value="{{ meta.next_page }}">
+        <button class="secondary-action">下一页</button>
+      </form>
+    {% else %}
+      <span class="secondary-link disabled">下一页</span>
+    {% endif %}
+  </div>
+{%- endmacro %}
+
+{% block content %}
+<section class="page-header">
+  <div>
+    <p class="eyebrow">Key 自助查询</p>
+    <h2>API Key 使用状态</h2>
+    <p class="page-desc">输入 API Key 查看请求次数、当日请求、有效期状态和最近请求记录。分页与筛选不会把完整 Key 暴露到地址栏。</p>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h3>查询密钥</h3>
+      <p>日期筛选按请求日志时间过滤；不填写日期时默认显示该 Key 最新 20 条请求记录。</p>
+    </div>
+  </div>
+  <form method="post" action="/admin/key-lookup" class="form-grid">
+    <label class="span-2">API Key
+      <input name="key_value" value="{{ raw_key }}" placeholder="sk-baidu-..." autocomplete="off" required>
+    </label>
+    <label>开始日期
+      <input type="date" name="start_date" value="{{ start_date }}">
+    </label>
+    <label>结束日期
+      <input type="date" name="end_date" value="{{ end_date }}">
+    </label>
+    <input type="hidden" name="page" value="1">
+    <div class="span-2">
+      <button class="primary-action">查询</button>
+      {% if raw_key %}
+        <a class="secondary-link" href="/admin/key-lookup">清除</a>
+      {% endif %}
+    </div>
+  </form>
+</section>
+
+{% if error %}
+  <section class="notice danger-notice">{{ error }}</section>
+{% endif %}
+
+{% if item %}
+  {% set expired = item.expires_at and item.expires_at <= now %}
+  <section class="grid">
+    <div class="metric"><b>{{ total_requests }}</b><span>请求总次数</span></div>
+    <div class="metric"><b>{{ today_requests }}</b><span>当日请求次数</span></div>
+    <div class="metric"><b>{{ meta.total }}</b><span>当前筛选记录</span></div>
+    <div class="metric">
+      <b>{{ "已过期" if expired else ("启用中" if item.enabled else "已停用") }}</b>
+      <span>Key 状态</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h3>有效期信息</h3>
+        <p>{{ item.name }} · {{ item.key_preview }}</p>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="metric">
+        <b>{{ item.validity_days if item.validity_days else "长期" }}</b>
+        <span>{{ "有效天数" if item.validity_days else "有效周期" }}</span>
+      </div>
+      <div class="metric">
+        <b>{{ item.activated_at or "暂未使用" }}</b>
+        <span>首次使用时间</span>
+      </div>
+      <div class="metric">
+        <b>{{ item.expires_at or ("暂未使用" if item.validity_days else "长期有效") }}</b>
+        <span>到期时间</span>
+      </div>
+      <div class="metric">
+        <b>{{ item.last_used_at or "未使用" }}</b>
+        <span>最后请求时间</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <h3>请求记录</h3>
+        <p>默认每页 20 条，按时间倒序展示。请求日志关闭期间不会产生明细记录，但 Key 总次数仍会继续累计。</p>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data-table log-table">
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>request_id</th>
+            <th>接口</th>
+            <th>模型</th>
+            <th>来源 IP</th>
+            <th>耗时</th>
+            <th>字符量</th>
+            <th>状态</th>
+            <th>错误</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for log in logs %}
+          <tr>
+            <td><small>{{ log.created_at }}</small></td>
+            <td><code>{{ log.request_id }}</code></td>
+            <td>{{ log.endpoint }}</td>
+            <td>{{ log.model }}</td>
+            <td>{{ log.source_ip or "-" }}</td>
+            <td>{{ log.duration_ms }} ms</td>
+            <td>
+              <small>输入：{{ log.prompt_chars }}</small>
+              <small>输出：{{ log.completion_chars }}</small>
+            </td>
+            <td>
+              {% if log.status_code >= 400 %}
+                <span class="status-pill danger">{{ log.status_code }}</span>
+              {% else %}
+                <span class="status-pill ok">{{ log.status_code }}</span>
+              {% endif %}
+            </td>
+            <td class="log-message">{{ log.error or "-" }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="9" class="empty-state">当前筛选条件下暂无请求记录。</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {{ lookup_pager(meta, raw_key, start_date, end_date) }}
+  </section>
+{% endif %}
+{% endblock %}
