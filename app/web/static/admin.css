@@ -73,6 +73,30 @@ main {
   max-width: 1440px;
 }
 
+.public-page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
+}
+
+.public-page main {
+  width: min(100%, 1120px);
+  max-width: none;
+  margin: 0 auto;
+  padding: 64px 24px 72px;
+}
+
+.public-page .page-header {
+  margin-bottom: 22px;
+}
+
+.public-page .page-desc {
+  max-width: 840px;
+}
+
+.public-page .panel {
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+}
+
 h2,
 h3,
 p {
