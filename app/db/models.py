@@ -56,6 +56,7 @@ class ApiKey(Base):
     name: Mapped[str] = mapped_column(String(128))
     key_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     key_preview: Mapped[str] = mapped_column(String(32))
+    key_value: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     request_limit_total: Mapped[int] = mapped_column(Integer, default=0)
     request_limit_per_day: Mapped[int] = mapped_column(Integer, default=0)
@@ -64,6 +65,7 @@ class ApiKey(Base):
     allowed_models: Mapped[str] = mapped_column(Text, default="*")
     ip_whitelist: Mapped[str] = mapped_column(Text, default="")
     ip_blacklist: Mapped[str] = mapped_column(Text, default="")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

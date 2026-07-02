@@ -37,6 +37,20 @@ def require_admin(request: Request):
         raise HTTPException(status_code=303, headers={"Location": "/admin/login"})
 
 
+def parse_optional_datetime(value: str | None) -> datetime | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def api_key_preview(raw: str) -> str:
+    return raw[:12] + "..." if len(raw) > 12 else raw
+
+
 def audit(db: Session, request: Request, action: str, target: str = "", detail: str = "") -> None:
     ip = request.client.host if request.client else ""
     db.add(OperationAudit(actor="admin", source_ip=ip, action=action, target=target, detail=detail))
@@ -814,13 +828,17 @@ def save_credential(
 @router.get("/api-keys", response_class=HTMLResponse)
 def api_keys_page(request: Request, db: Session = Depends(get_db), _: None = Depends(require_admin)):
     items = db.scalars(select(ApiKey).order_by(ApiKey.id)).all()
-    return templates.TemplateResponse("api_keys.html", {"request": request, "items": items, "new_key": request.query_params.get("new_key")})
+    return templates.TemplateResponse(
+        "api_keys.html",
+        {"request": request, "items": items, "new_key": request.query_params.get("new_key"), "now": datetime.utcnow()},
+    )
 
 
 @router.post("/api-keys")
 def create_api_key(
     request: Request,
     name: str = Form(...),
+    key_value: str = Form(""),
     allowed_models: str = Form("*"),
     request_limit_total: int = Form(0),
     request_limit_per_day: int = Form(0),
@@ -828,15 +846,17 @@ def create_api_key(
     token_limit_per_day: int = Form(0),
     ip_whitelist: str = Form(""),
     ip_blacklist: str = Form(""),
+    expires_at: str = Form(""),
     db: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ):
-    raw = "sk-baidu-" + secrets.token_urlsafe(32)
+    raw = key_value.strip() or "sk-baidu-" + secrets.token_urlsafe(32)
     db.add(
         ApiKey(
             name=name,
             key_hash=sha256_token(raw),
-            key_preview=raw[:12] + "...",
+            key_preview=api_key_preview(raw),
+            key_value=raw,
             allowed_models=allowed_models,
             request_limit_total=request_limit_total,
             request_limit_per_day=request_limit_per_day,
@@ -844,6 +864,7 @@ def create_api_key(
             token_limit_per_day=token_limit_per_day,
             ip_whitelist=ip_whitelist,
             ip_blacklist=ip_blacklist,
+            expires_at=parse_optional_datetime(expires_at),
         )
     )
     db.commit()
@@ -856,6 +877,7 @@ def update_api_key(
     request: Request,
     key_id: int,
     name: str = Form(...),
+    key_value: str = Form(""),
     allowed_models: str = Form("*"),
     request_limit_total: int = Form(0),
     request_limit_per_day: int = Form(0),
@@ -863,12 +885,18 @@ def update_api_key(
     token_limit_per_day: int = Form(0),
     ip_whitelist: str = Form(""),
     ip_blacklist: str = Form(""),
+    expires_at: str = Form(""),
     db: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ):
     item = db.get(ApiKey, key_id)
     if item:
         item.name = name
+        raw = key_value.strip()
+        if raw:
+            item.key_hash = sha256_token(raw)
+            item.key_preview = api_key_preview(raw)
+            item.key_value = raw
         item.allowed_models = allowed_models
         item.request_limit_total = request_limit_total
         item.request_limit_per_day = request_limit_per_day
@@ -876,9 +904,29 @@ def update_api_key(
         item.token_limit_per_day = token_limit_per_day
         item.ip_whitelist = ip_whitelist
         item.ip_blacklist = ip_blacklist
+        item.expires_at = parse_optional_datetime(expires_at)
         db.commit()
         audit(db, request, "api_key_update", item.name)
     return RedirectResponse("/admin/api-keys", status_code=303)
+
+
+@router.post("/api-keys/{key_id}/reset")
+def reset_api_key(
+    request: Request,
+    key_id: int,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_admin),
+):
+    item = db.get(ApiKey, key_id)
+    if not item:
+        return RedirectResponse("/admin/api-keys", status_code=303)
+    raw = "sk-baidu-" + secrets.token_urlsafe(32)
+    item.key_hash = sha256_token(raw)
+    item.key_preview = api_key_preview(raw)
+    item.key_value = raw
+    db.commit()
+    audit(db, request, "api_key_reset", item.name, f"id={key_id}")
+    return RedirectResponse(f"/admin/api-keys?new_key={raw}", status_code=303)
 
 
 @router.post("/api-keys/{key_id}/toggle")

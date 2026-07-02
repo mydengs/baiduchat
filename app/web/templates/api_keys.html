@@ -13,6 +13,7 @@
 <section class="notice">
   <strong>新 Key 只显示一次</strong>
   <code>{{ new_key }}</code>
+  <button type="button" class="secondary-action" data-copy-value="{{ new_key }}">复制 Key</button>
 </section>
 {% endif %}
 
@@ -36,6 +37,7 @@
           <th>名称</th>
           <th>Key 预览</th>
           <th>状态</th>
+          <th>有效期</th>
           <th>模型权限</th>
           <th>请求限额</th>
           <th>字符额度</th>
@@ -50,9 +52,17 @@
           <td><strong>{{ item.name }}</strong></td>
           <td><code>{{ item.key_preview }}</code></td>
           <td>
-            <span class="status-pill {{ 'ok' if item.enabled else 'off' }}">
-              {{ "启用中" if item.enabled else "已停用" }}
+            {% set expired = item.expires_at and item.expires_at <= now %}
+            <span class="status-pill {{ 'danger' if expired else ('ok' if item.enabled else 'off') }}">
+              {{ "已过期" if expired else ("启用中" if item.enabled else "已停用") }}
             </span>
+          </td>
+          <td>
+            {% if item.expires_at %}
+              <small>{{ item.expires_at }}</small>
+            {% else %}
+              <small>长期有效</small>
+            {% endif %}
           </td>
           <td>{{ item.allowed_models }}</td>
           <td>
@@ -70,6 +80,14 @@
           <td class="right">
             <div class="row-actions">
               <button type="button" class="secondary-action" data-modal-open="edit-key-{{ item.id }}">编辑</button>
+              {% if item.key_value %}
+                <button type="button" class="secondary-action" data-copy-value="{{ item.key_value }}">复制</button>
+              {% else %}
+                <button type="button" class="secondary-action" disabled title="历史 Key 未保存明文，请重置后复制">复制</button>
+              {% endif %}
+              <form method="post" action="/admin/api-keys/{{ item.id }}/reset" onsubmit="return confirm('确定重置 API Key「{{ item.name }}」吗？旧 Key 会立即失效。')">
+                <button class="secondary-action">重置</button>
+              </form>
               <form method="post" action="/admin/api-keys/{{ item.id }}/toggle">
                 <button class="{{ 'danger-action' if item.enabled else 'secondary-action' }}">
                   {{ "停用" if item.enabled else "启用" }}
@@ -83,7 +101,7 @@
         </tr>
       {% else %}
         <tr>
-          <td colspan="9" class="empty-state">还没有 API Key，请先新增一个。</td>
+          <td colspan="10" class="empty-state">还没有 API Key，请先新增一个。</td>
         </tr>
       {% endfor %}
       </tbody>
@@ -102,6 +120,8 @@
     </div>
     <form method="post" class="form-grid">
       <label>名称<input name="name" placeholder="例如：默认客户端" required></label>
+      <label>Key 值<input name="key_value" placeholder="留空自动生成；也可以填自定义 sk-..."></label>
+      <label>有效期<input type="datetime-local" name="expires_at"><small>留空表示长期有效，按服务器时间判断。</small></label>
       <label>允许模型<input name="allowed_models" value="*" placeholder="逗号分隔，例如 smart,deepseek-v4-pro；* 表示全部"></label>
       <label>总请求次数<input type="number" min="0" name="request_limit_total" value="0" placeholder="0 表示不限"></label>
       <label>每日请求次数<input type="number" min="0" name="request_limit_per_day" value="0" placeholder="0 表示不限"></label>
@@ -129,6 +149,14 @@
     </div>
     <form method="post" action="/admin/api-keys/{{ item.id }}/update" class="form-grid">
       <label>名称<input name="name" value="{{ item.name }}" required></label>
+      <label>Key 值
+        <input name="key_value" value="{{ item.key_value }}" placeholder="留空保持当前 Key；填写新值会替换旧 Key">
+        {% if not item.key_value %}<small>历史 Key 没有明文，需重置或填写新 Key 后才能复制。</small>{% endif %}
+      </label>
+      <label>有效期
+        <input type="datetime-local" name="expires_at" value="{{ item.expires_at.strftime('%Y-%m-%dT%H:%M') if item.expires_at else '' }}">
+        <small>留空表示长期有效，按服务器时间判断。</small>
+      </label>
       <label>允许模型<input name="allowed_models" value="{{ item.allowed_models }}" placeholder="逗号分隔或 *"></label>
       <label>总请求次数<input type="number" min="0" name="request_limit_total" value="{{ item.request_limit_total or 0 }}" placeholder="0 表示不限"></label>
       <label>每日请求次数<input type="number" min="0" name="request_limit_per_day" value="{{ item.request_limit_per_day or 0 }}" placeholder="0 表示不限"></label>
@@ -167,6 +195,20 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     document.querySelectorAll(".modal-backdrop:not([hidden])").forEach((modal) => modal.hidden = true);
   }
+});
+document.querySelectorAll("[data-copy-value]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const value = button.dataset.copyValue || "";
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      const original = button.textContent;
+      button.textContent = "已复制";
+      setTimeout(() => button.textContent = original, 1200);
+    } catch (error) {
+      window.prompt("复制失败，请手动复制：", value);
+    }
+  });
 });
 </script>
 {% endblock %}

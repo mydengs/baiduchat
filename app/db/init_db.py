@@ -130,6 +130,7 @@ def init_db(admin_password: str | None = None) -> str | None:
                     name="default",
                     key_hash=sha256_token(raw_key),
                     key_preview=raw_key[:12] + "...",
+                    key_value=raw_key,
                     allowed_models="*",
                 )
             )
@@ -150,6 +151,8 @@ def migrate_db() -> None:
                 "token_limit_per_day": "ALTER TABLE api_keys ADD COLUMN token_limit_per_day INTEGER DEFAULT 0",
                 "ip_whitelist": "ALTER TABLE api_keys ADD COLUMN ip_whitelist TEXT DEFAULT ''",
                 "ip_blacklist": "ALTER TABLE api_keys ADD COLUMN ip_blacklist TEXT DEFAULT ''",
+                "key_value": "ALTER TABLE api_keys ADD COLUMN key_value TEXT DEFAULT ''",
+                "expires_at": "ALTER TABLE api_keys ADD COLUMN expires_at DATETIME",
             }
             for column, statement in migrations.items():
                 if column not in columns:

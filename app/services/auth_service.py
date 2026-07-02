@@ -20,6 +20,8 @@ def get_api_key(
     key = db.scalar(select(ApiKey).where(ApiKey.key_hash == sha256_token(raw), ApiKey.enabled.is_(True)))
     if not key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    if key.expires_at and key.expires_at <= datetime.utcnow():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API key expired")
     return key
 
 
