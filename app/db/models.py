@@ -65,7 +65,11 @@ class ApiKey(Base):
     allowed_models: Mapped[str] = mapped_column(Text, default="*")
     ip_whitelist: Mapped[str] = mapped_column(Text, default="")
     ip_blacklist: Mapped[str] = mapped_column(Text, default="")
+    validity_days: Mapped[int] = mapped_column(Integer, default=0)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    use_count_total: Mapped[int] = mapped_column(Integer, default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

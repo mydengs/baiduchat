@@ -38,6 +38,7 @@
           <th>Key 预览</th>
           <th>状态</th>
           <th>有效期</th>
+          <th>使用次数</th>
           <th>模型权限</th>
           <th>请求限额</th>
           <th>字符额度</th>
@@ -58,11 +59,21 @@
             </span>
           </td>
           <td>
-            {% if item.expires_at %}
-              <small>{{ item.expires_at }}</small>
+            {% if item.validity_days %}
+              <span>{{ item.validity_days }} 天</span>
+              {% if item.activated_at %}
+                <small>开始 {{ item.activated_at }}</small>
+                <small>到期 {{ item.expires_at }}</small>
+              {% else %}
+                <small>首次请求后开始计时</small>
+              {% endif %}
             {% else %}
               <small>长期有效</small>
             {% endif %}
+          </td>
+          <td>
+            <span>{{ item.use_count_total or 0 }}</span>
+            <small>最后 {{ item.last_used_at or "未使用" }}</small>
           </td>
           <td>{{ item.allowed_models }}</td>
           <td>
@@ -101,7 +112,7 @@
         </tr>
       {% else %}
         <tr>
-          <td colspan="10" class="empty-state">还没有 API Key，请先新增一个。</td>
+          <td colspan="11" class="empty-state">还没有 API Key，请先新增一个。</td>
         </tr>
       {% endfor %}
       </tbody>
@@ -121,7 +132,19 @@
     <form method="post" class="form-grid">
       <label>名称<input name="name" placeholder="例如：默认客户端" required></label>
       <label>Key 值<input name="key_value" placeholder="留空自动生成；也可以填自定义 sk-..."></label>
-      <label>有效期<input type="datetime-local" name="expires_at"><small>留空表示长期有效，按服务器时间判断。</small></label>
+      <label>有效期
+        <select name="validity_preset">
+          <option value="0">长期有效</option>
+          <option value="30">1 个月</option>
+          <option value="60">2 个月</option>
+          <option value="90">3 个月</option>
+          <option value="180">6 个月</option>
+          <option value="365">12 个月</option>
+          <option value="custom">自定义天数</option>
+        </select>
+        <small>设置周期后，从第一次请求成功鉴权时开始计算。</small>
+      </label>
+      <label>自定义天数<input type="number" min="0" name="validity_days_custom" value="0" placeholder="选择自定义天数时生效"></label>
       <label>允许模型<input name="allowed_models" value="*" placeholder="逗号分隔，例如 smart,deepseek-v4-pro；* 表示全部"></label>
       <label>总请求次数<input type="number" min="0" name="request_limit_total" value="0" placeholder="0 表示不限"></label>
       <label>每日请求次数<input type="number" min="0" name="request_limit_per_day" value="0" placeholder="0 表示不限"></label>
@@ -154,9 +177,20 @@
         {% if not item.key_value %}<small>历史 Key 没有明文，需重置或填写新 Key 后才能复制。</small>{% endif %}
       </label>
       <label>有效期
-        <input type="datetime-local" name="expires_at" value="{{ item.expires_at.strftime('%Y-%m-%dT%H:%M') if item.expires_at else '' }}">
-        <small>留空表示长期有效，按服务器时间判断。</small>
+        {% set validity = item.validity_days or 0 %}
+        {% set preset_values = [0, 30, 60, 90, 180, 365] %}
+        <select name="validity_preset">
+          <option value="0" {% if validity == 0 %}selected{% endif %}>长期有效</option>
+          <option value="30" {% if validity == 30 %}selected{% endif %}>1 个月</option>
+          <option value="60" {% if validity == 60 %}selected{% endif %}>2 个月</option>
+          <option value="90" {% if validity == 90 %}selected{% endif %}>3 个月</option>
+          <option value="180" {% if validity == 180 %}selected{% endif %}>6 个月</option>
+          <option value="365" {% if validity == 365 %}selected{% endif %}>12 个月</option>
+          <option value="custom" {% if validity not in preset_values %}selected{% endif %}>自定义天数</option>
+        </select>
+        <small>修改周期会清空当前计时，下一次请求重新开始计算。</small>
       </label>
+      <label>自定义天数<input type="number" min="0" name="validity_days_custom" value="{{ validity if validity not in preset_values else 0 }}" placeholder="选择自定义天数时生效"></label>
       <label>允许模型<input name="allowed_models" value="{{ item.allowed_models }}" placeholder="逗号分隔或 *"></label>
       <label>总请求次数<input type="number" min="0" name="request_limit_total" value="{{ item.request_limit_total or 0 }}" placeholder="0 表示不限"></label>
       <label>每日请求次数<input type="number" min="0" name="request_limit_per_day" value="{{ item.request_limit_per_day or 0 }}" placeholder="0 表示不限"></label>

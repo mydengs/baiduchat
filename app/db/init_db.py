@@ -152,7 +152,11 @@ def migrate_db() -> None:
                 "ip_whitelist": "ALTER TABLE api_keys ADD COLUMN ip_whitelist TEXT DEFAULT ''",
                 "ip_blacklist": "ALTER TABLE api_keys ADD COLUMN ip_blacklist TEXT DEFAULT ''",
                 "key_value": "ALTER TABLE api_keys ADD COLUMN key_value TEXT DEFAULT ''",
+                "validity_days": "ALTER TABLE api_keys ADD COLUMN validity_days INTEGER DEFAULT 0",
+                "activated_at": "ALTER TABLE api_keys ADD COLUMN activated_at DATETIME",
                 "expires_at": "ALTER TABLE api_keys ADD COLUMN expires_at DATETIME",
+                "use_count_total": "ALTER TABLE api_keys ADD COLUMN use_count_total INTEGER DEFAULT 0",
+                "last_used_at": "ALTER TABLE api_keys ADD COLUMN last_used_at DATETIME",
             }
             for column, statement in migrations.items():
                 if column not in columns:

@@ -51,6 +51,16 @@ def api_key_preview(raw: str) -> str:
     return raw[:12] + "..." if len(raw) > 12 else raw
 
 
+def parse_validity_days(preset: str | None, custom_days: int | None) -> int:
+    raw = (preset or "0").strip()
+    if raw == "custom":
+        return max(0, custom_days or 0)
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
+
+
 def audit(db: Session, request: Request, action: str, target: str = "", detail: str = "") -> None:
     ip = request.client.host if request.client else ""
     db.add(OperationAudit(actor="admin", source_ip=ip, action=action, target=target, detail=detail))
@@ -846,11 +856,13 @@ def create_api_key(
     token_limit_per_day: int = Form(0),
     ip_whitelist: str = Form(""),
     ip_blacklist: str = Form(""),
-    expires_at: str = Form(""),
+    validity_preset: str = Form("0"),
+    validity_days_custom: int = Form(0),
     db: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ):
     raw = key_value.strip() or "sk-baidu-" + secrets.token_urlsafe(32)
+    validity_days = parse_validity_days(validity_preset, validity_days_custom)
     db.add(
         ApiKey(
             name=name,
@@ -864,7 +876,7 @@ def create_api_key(
             token_limit_per_day=token_limit_per_day,
             ip_whitelist=ip_whitelist,
             ip_blacklist=ip_blacklist,
-            expires_at=parse_optional_datetime(expires_at),
+            validity_days=validity_days,
         )
     )
     db.commit()
@@ -885,12 +897,15 @@ def update_api_key(
     token_limit_per_day: int = Form(0),
     ip_whitelist: str = Form(""),
     ip_blacklist: str = Form(""),
-    expires_at: str = Form(""),
+    validity_preset: str = Form("0"),
+    validity_days_custom: int = Form(0),
     db: Session = Depends(get_db),
     _: None = Depends(require_admin),
 ):
     item = db.get(ApiKey, key_id)
     if item:
+        previous_validity_days = item.validity_days or 0
+        validity_days = parse_validity_days(validity_preset, validity_days_custom)
         item.name = name
         raw = key_value.strip()
         if raw:
@@ -904,7 +919,13 @@ def update_api_key(
         item.token_limit_per_day = token_limit_per_day
         item.ip_whitelist = ip_whitelist
         item.ip_blacklist = ip_blacklist
-        item.expires_at = parse_optional_datetime(expires_at)
+        item.validity_days = validity_days
+        if validity_days <= 0:
+            item.activated_at = None
+            item.expires_at = None
+        elif validity_days != previous_validity_days:
+            item.activated_at = None
+            item.expires_at = None
         db.commit()
         audit(db, request, "api_key_update", item.name)
     return RedirectResponse("/admin/api-keys", status_code=303)
@@ -924,6 +945,10 @@ def reset_api_key(
     item.key_hash = sha256_token(raw)
     item.key_preview = api_key_preview(raw)
     item.key_value = raw
+    item.activated_at = None
+    item.expires_at = None
+    item.use_count_total = 0
+    item.last_used_at = None
     db.commit()
     audit(db, request, "api_key_reset", item.name, f"id={key_id}")
     return RedirectResponse(f"/admin/api-keys?new_key={raw}", status_code=303)
