@@ -2313,10 +2313,15 @@ async def _stream_responses(
 ) -> AsyncIterator[str]:
     response_id = "resp-" + uuid.uuid4().hex
     message_item_id = "msg-" + uuid.uuid4().hex
-    text_output_index = 0
     text_content_index = 0
     text_output_started = False
     text_output_sent = ""
+    reasoning_item_id = "rs_" + uuid.uuid4().hex
+    reasoning_output_index = 0
+    reasoning_summary_index = 0
+    reasoning_content_index = 0
+    reasoning_started = False
+    reasoning_sent = ""
     db = SessionLocal()
     adapter = BaiduAdapter(db)
     output_reasoning = get_setting(db, "output_reasoning", "true").lower() == "true"
@@ -2353,11 +2358,15 @@ async def _stream_responses(
         },
     )
 
+    def response_text_output_index() -> int:
+        return 1 if reasoning_started else 0
+
     def response_text_events(delta: str) -> list[str]:
         nonlocal text_output_started, text_output_sent
         if not delta:
             return []
         events: list[str] = []
+        output_index = response_text_output_index()
         if not text_output_started:
             text_output_started = True
             events.append(
@@ -2366,7 +2375,7 @@ async def _stream_responses(
                     {
                         "type": "response.output_item.added",
                         "response_id": response_id,
-                        "output_index": text_output_index,
+                        "output_index": output_index,
                         "item": {
                             "id": message_item_id,
                             "type": "message",
@@ -2384,7 +2393,7 @@ async def _stream_responses(
                         "type": "response.content_part.added",
                         "response_id": response_id,
                         "item_id": message_item_id,
-                        "output_index": text_output_index,
+                        "output_index": output_index,
                         "content_index": text_content_index,
                         "part": {"type": "output_text", "text": ""},
                     },
@@ -2398,7 +2407,7 @@ async def _stream_responses(
                     "type": "response.output_text.delta",
                     "response_id": response_id,
                     "item_id": message_item_id,
-                    "output_index": text_output_index,
+                    "output_index": output_index,
                     "content_index": text_content_index,
                     "delta": delta,
                 },
@@ -2409,6 +2418,7 @@ async def _stream_responses(
     def response_text_done_events() -> list[str]:
         if not text_output_started:
             return []
+        output_index = response_text_output_index()
         return [
             sse_event(
                 "response.output_text.done",
@@ -2416,7 +2426,7 @@ async def _stream_responses(
                     "type": "response.output_text.done",
                     "response_id": response_id,
                     "item_id": message_item_id,
-                    "output_index": text_output_index,
+                    "output_index": output_index,
                     "content_index": text_content_index,
                     "text": text_output_sent,
                 },
@@ -2427,7 +2437,7 @@ async def _stream_responses(
                     "type": "response.content_part.done",
                     "response_id": response_id,
                     "item_id": message_item_id,
-                    "output_index": text_output_index,
+                    "output_index": output_index,
                     "content_index": text_content_index,
                     "part": {"type": "output_text", "text": text_output_sent},
                 },
@@ -2437,13 +2447,131 @@ async def _stream_responses(
                 {
                     "type": "response.output_item.done",
                     "response_id": response_id,
-                    "output_index": text_output_index,
+                    "output_index": output_index,
                     "item": {
                         "id": message_item_id,
                         "type": "message",
                         "status": "completed",
                         "role": "assistant",
                         "content": [{"type": "output_text", "text": text_output_sent}],
+                    },
+                },
+            ),
+        ]
+
+    def response_reasoning_events(delta: str) -> list[str]:
+        nonlocal reasoning_started, reasoning_sent
+        if not delta:
+            return []
+        events: list[str] = []
+        if not reasoning_started:
+            reasoning_started = True
+            events.append(
+                sse_event(
+                    "response.output_item.added",
+                    {
+                        "type": "response.output_item.added",
+                        "response_id": response_id,
+                        "output_index": reasoning_output_index,
+                        "item": {
+                            "id": reasoning_item_id,
+                            "type": "reasoning",
+                            "status": "in_progress",
+                            "summary": [],
+                        },
+                    },
+                )
+            )
+            events.append(
+                sse_event(
+                    "response.reasoning_summary_part.added",
+                    {
+                        "type": "response.reasoning_summary_part.added",
+                        "response_id": response_id,
+                        "item_id": reasoning_item_id,
+                        "output_index": reasoning_output_index,
+                        "summary_index": reasoning_summary_index,
+                        "part": {"type": "summary_text", "text": ""},
+                    },
+                )
+            )
+        reasoning_sent += delta
+        events.append(
+            sse_event(
+                "response.reasoning_summary_text.delta",
+                {
+                    "type": "response.reasoning_summary_text.delta",
+                    "response_id": response_id,
+                    "item_id": reasoning_item_id,
+                    "output_index": reasoning_output_index,
+                    "summary_index": reasoning_summary_index,
+                    "delta": delta,
+                },
+            )
+        )
+        events.append(
+            sse_event(
+                "response.reasoning_text.delta",
+                {
+                    "type": "response.reasoning_text.delta",
+                    "response_id": response_id,
+                    "item_id": reasoning_item_id,
+                    "output_index": reasoning_output_index,
+                    "content_index": reasoning_content_index,
+                    "delta": delta,
+                },
+            )
+        )
+        return events
+
+    def response_reasoning_done_events() -> list[str]:
+        if not reasoning_started:
+            return []
+        return [
+            sse_event(
+                "response.reasoning_summary_text.done",
+                {
+                    "type": "response.reasoning_summary_text.done",
+                    "response_id": response_id,
+                    "item_id": reasoning_item_id,
+                    "output_index": reasoning_output_index,
+                    "summary_index": reasoning_summary_index,
+                    "text": reasoning_sent,
+                },
+            ),
+            sse_event(
+                "response.reasoning_summary_part.done",
+                {
+                    "type": "response.reasoning_summary_part.done",
+                    "response_id": response_id,
+                    "item_id": reasoning_item_id,
+                    "output_index": reasoning_output_index,
+                    "summary_index": reasoning_summary_index,
+                    "part": {"type": "summary_text", "text": reasoning_sent},
+                },
+            ),
+            sse_event(
+                "response.reasoning_text.done",
+                {
+                    "type": "response.reasoning_text.done",
+                    "response_id": response_id,
+                    "item_id": reasoning_item_id,
+                    "output_index": reasoning_output_index,
+                    "content_index": reasoning_content_index,
+                    "text": reasoning_sent,
+                },
+            ),
+            sse_event(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "response_id": response_id,
+                    "output_index": reasoning_output_index,
+                    "item": {
+                        "id": reasoning_item_id,
+                        "type": "reasoning",
+                        "status": "completed",
+                        "summary": [{"type": "summary_text", "text": reasoning_sent}],
                     },
                 },
             ),
@@ -2468,10 +2596,8 @@ async def _stream_responses(
                     ):
                         _update_conversation_from_event(db, binding, event, content_preview)
                         if output_reasoning and event.reasoning and not force_buffer_all and not tool_buffer_mode:
-                            yield sse_event(
-                                "response.reasoning_text.delta",
-                                {"type": "response.reasoning_text.delta", "delta": event.reasoning, "response_id": response_id},
-                            )
+                            for response_event in response_reasoning_events(event.reasoning):
+                                yield response_event
                             continue
                         text = event.text or ""
                         if long_text_strategy == "stream_delta":
@@ -2566,6 +2692,8 @@ async def _stream_responses(
     finally:
         final_status = "requires_action" if emitted_tool_calls else "completed"
         _release_conversation_lock(conversation_lock)
+        for response_event in response_reasoning_done_events():
+            yield response_event
         for response_event in response_text_done_events():
             yield response_event
         yield sse_event(
