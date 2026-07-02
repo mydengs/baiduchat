@@ -71,11 +71,12 @@
     <label class="span-2">客户端没有传 conversation_id 时
       <select name="conversation_missing_id_strategy">
         <option value="smart" {% if values.conversation_missing_id_strategy == "smart" %}selected{% endif %}>智能派生：API Key + IP + 模型 + 首条用户消息 hash</option>
+        <option value="stable" {% if values.conversation_missing_id_strategy == "stable" %}selected{% endif %}>稳定绑定：API Key + 模型，不使用 IP 和首条消息 hash</option>
         <option value="strict" {% if values.conversation_missing_id_strategy == "strict" %}selected{% endif %}>严格模式：拒绝请求，要求客户端传 conversation_id</option>
         <option value="ephemeral" {% if values.conversation_missing_id_strategy == "ephemeral" %}selected{% endif %}>每次新建：每个请求都创建新的本地会话</option>
         <option value="fallback" {% if values.conversation_missing_id_strategy == "fallback" %}selected{% endif %}>旧兼容：API Key + IP + 模型，可能让多个客户端窗口串上下文</option>
       </select>
-      <small>绑定模式必须先有本地会话键，第一轮成功后才能拿到百度 sessionId；这里决定客户端不传会话 ID 时如何生成本地会话键。</small>
+      <small>绑定模式必须先有本地会话键，第一轮成功后才能拿到百度 sessionId；这里是互斥策略，同一时间只会启用一种本地会话键生成方式。</small>
     </label>
 
     <label class="checkbox-line span-2">

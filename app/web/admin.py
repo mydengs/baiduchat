@@ -638,7 +638,7 @@ def save_conversation_settings(
         conversation_mode = "stateless"
     if conversation_message_strategy not in {"smart", "latest_user_only", "full_messages"}:
         conversation_message_strategy = "smart"
-    if conversation_missing_id_strategy not in {"smart", "strict", "ephemeral", "fallback"}:
+    if conversation_missing_id_strategy not in {"smart", "stable", "strict", "ephemeral", "fallback"}:
         conversation_missing_id_strategy = "smart"
     if conversation_response_mode not in {"client", "stream", "buffered_stream", "non_stream"}:
         conversation_response_mode = "client"

@@ -32,7 +32,7 @@ DEFAULT_SETTINGS = {
     "credential_failure_disable_threshold": ("3", "单个凭证连续失败达到该次数后自动停用；0 表示不自动停用。"),
     "conversation_mode": ("stateless", "会话模式：stateless 无状态；bound 绑定百度窗口；hybrid 有会话标识时绑定、否则无状态。"),
     "conversation_fallback_binding": ("false", "客户端没有传 conversation_id 时，是否用 API Key、来源 IP、模型和 user 自动生成绑定会话。"),
-    "conversation_missing_id_strategy": ("smart", "客户端没有传 conversation_id 时的绑定策略：smart 使用首条用户消息派生；strict 直接拒绝；ephemeral 每次新建；fallback 使用旧的 API Key+IP+模型。"),
+    "conversation_missing_id_strategy": ("smart", "客户端没有传 conversation_id 时的绑定策略：smart 使用首条用户消息派生；stable 使用 API Key+模型稳定绑定；strict 直接拒绝；ephemeral 每次新建；fallback 使用旧的 API Key+IP+模型。"),
     "conversation_ttl_hours": ("24", "绑定会话超过多少小时无请求后视为过期，后续自动新建百度窗口。"),
     "conversation_max_turns": ("50", "单个绑定会话最大轮次，超过后自动重置为新的百度窗口；0 表示不限制。"),
     "conversation_save_content": ("true", "是否保存会话请求和响应预览，用于后台排查；关闭后只保存 ID、状态和耗时。"),

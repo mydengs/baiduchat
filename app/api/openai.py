@@ -1533,7 +1533,7 @@ def _conversation_key(
     if fallback:
         source_ip = request.client.host if request.client else ""
         strategy = get_setting(db, "conversation_missing_id_strategy", "smart").lower()
-        if strategy not in {"smart", "fallback", "strict", "ephemeral"}:
+        if strategy not in {"smart", "stable", "fallback", "strict", "ephemeral"}:
             strategy = "smart"
         if strategy == "strict":
             raise HTTPException(
@@ -1550,6 +1550,8 @@ def _conversation_key(
             seed = first_user_text(messages) or str(getattr(body, "user", "") or "")
             seed_hash = hashlib.sha256(seed.encode("utf-8", errors="ignore")).hexdigest()[:20]
             return f"smart:{api_key.name}:{source_ip}:{canonical_model}:{seed_hash}"[:240]
+        if strategy == "stable":
+            return f"stable:{api_key.name}:{canonical_model}"[:240]
         return f"fallback:{api_key.name}:{source_ip}:{canonical_model}"[:240]
     return ""
 
